@@ -29,6 +29,16 @@ const parseTimestamp = (t: string): number => {
   return Date.parse(t.endsWith("Z") ? t : `${t}Z`);
 };
 
+const imgSrc = (r: HdvResource) => {
+  const blob = r.img_blob;
+  if (!blob) return "";
+  const maybePng = blob.startsWith("iVBOR");
+  const mime = maybePng ? "image/png" : "image/jpeg";
+  return `data:${mime};base64,${blob}`;
+};
+
+const formatPrice = (v: number) => Math.round(v).toLocaleString("fr-FR");
+
 export default function Prices() {
   const [resources, setResources] = useState<HdvResource[]>([]);
   const [selected, setSelected] = useState<string[]>(() => {
@@ -51,13 +61,13 @@ export default function Prices() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await listHdvResources();
+        const res = await listHdvResources(1000, qty);
         setResources(res);
       } catch (e) {
         console.error("Failed to load resources", e);
       }
     })();
-  }, []);
+  }, [qty]);
 
   useEffect(() => {
     if (selected.length === 0) {
@@ -217,7 +227,7 @@ export default function Prices() {
 
   const toggle = (slug: string, checked: boolean) => {
     setSelected((prev) => {
-      if (checked) return [...prev, slug];
+      if (checked) return prev.includes(slug) ? prev : [...prev, slug];
       return prev.filter((s) => s !== slug);
     });
   };
@@ -226,16 +236,29 @@ export default function Prices() {
     <div className="space-y-6">
       <h2 className="text-lg font-semibold">Historique des prix</h2>
       <div className="flex flex-wrap gap-4">
-        {resources.map((r) => (
-          <label key={r.slug} className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={selected.includes(r.slug)}
-              onChange={(e) => toggle(r.slug, e.target.checked)}
-            />
-            <span>{r.slug}</span>
-          </label>
-        ))}
+        {resources.map((r) => {
+          const isSel = selected.includes(r.slug);
+          return (
+            <button
+              key={r.slug}
+              onClick={() => toggle(r.slug, !isSel)}
+              className={`w-32 p-2 rounded-lg border text-sm flex flex-col items-center gap-1 ${isSel ? "border-blue-500 ring-2 ring-blue-200" : "border-gray-200"}`}
+            >
+              <div className="w-10 h-10 rounded-md overflow-hidden bg-gray-100 flex items-center justify-center">
+                {r.img_blob ? (
+                  // eslint-disable-next-line jsx-a11y/alt-text
+                  <img src={imgSrc(r)} alt={r.name_fr || r.slug} className="w-full h-full object-cover" />
+                ) : (
+                  <div className="text-xs text-gray-400">—</div>
+                )}
+              </div>
+              <span className="truncate w-full text-center">{r.name_fr || r.slug}</span>
+              {r.avg_unit_price != null && (
+                <span className="text-xs text-gray-500">{formatPrice(r.avg_unit_price)} K</span>
+              )}
+            </button>
+          );
+        })}
       </div>
       <div className="flex items-center gap-4 text-sm">
         <label className="flex items-center gap-2">
