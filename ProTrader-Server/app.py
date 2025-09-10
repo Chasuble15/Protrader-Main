@@ -1,6 +1,7 @@
 # backend/app.py
 # pip install fastapi "uvicorn[standard]" websockets
 import asyncio, json, time, statistics
+from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
@@ -475,8 +476,8 @@ def list_hdv_resources(qty: str | None = Query(default=None, description="Filtre
 
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
 
-    # Pour chaque slug : count total, last_seen, et dernier prix par qty
-    # 1) stats de base
+    # Pour chaque slug : count total, last_seen, infos item et dernier prix par qty
+    # 1) stats de base + info item
     cur.execute(f"""
         WITH base AS (
             SELECT slug,
@@ -488,12 +489,21 @@ def list_hdv_resources(qty: str | None = Query(default=None, description="Filtre
             ORDER BY last_seen DESC
             LIMIT ?
         )
-        SELECT b.slug, b.points, b.last_seen
+        SELECT b.slug, b.points, b.last_seen, i.name_fr, i.img_blob
         FROM base b
+        LEFT JOIN items i ON i.slug_fr = b.slug
         ORDER BY b.last_seen DESC
     """, (*params, limit))
     rows = cur.fetchall()
-    slugs = [dict(r) for r in rows]
+    slugs = []
+    for r in rows:
+        d = dict(r)
+        blob = d.get("img_blob")
+        if blob is not None and isinstance(blob, (bytes, bytearray)):
+            d["img_blob"] = base64.b64encode(blob).decode("ascii")
+        else:
+            d["img_blob"] = ""
+        slugs.append(d)
 
     if not slugs:
         conn.close()
@@ -516,6 +526,19 @@ def list_hdv_resources(qty: str | None = Query(default=None, description="Filtre
     """, (*slug_list,))
     last_price_rows = cur.fetchall()
 
+    # 3) prix moyen à l'unité sur la dernière semaine pour la qty demandée (ou x1)
+    since = (datetime.utcnow() - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    qty_for_avg = qtys[0] if qtys else "x1"
+    qty_num = int(qty_for_avg[1:]) if qty_for_avg.startswith("x") else 1
+    cur.execute(f"""
+        SELECT slug, AVG(price) AS avg_price
+        FROM hdv_prices
+        WHERE slug IN ({qmarks}) AND qty = ? AND datetime >= ?
+        GROUP BY slug
+    """, (*slug_list, qty_for_avg, since))
+    avg_rows = cur.fetchall()
+    avg_map = {r["slug"]: r["avg_price"] / qty_num for r in avg_rows}
+
     by_slug: Dict[str, Dict[str, Any]] = {r["slug"]: {} for r in slugs}
     for r in last_price_rows:
         by_slug[r["slug"]][r["qty"]] = {"price": r["price"], "datetime": r["datetime"]}
@@ -525,9 +548,12 @@ def list_hdv_resources(qty: str | None = Query(default=None, description="Filtre
     for r in slugs:
         out.append({
             "slug": r["slug"],
+            "name_fr": r.get("name_fr"),
+            "img_blob": r.get("img_blob"),
             "points": r["points"],
             "last_seen": r["last_seen"],
-            "last_prices": by_slug.get(r["slug"], {})  # dict par qty
+            "last_prices": by_slug.get(r["slug"], {}),  # dict par qty
+            "avg_unit_price": avg_map.get(r["slug"]),
         })
 
     conn.close()
