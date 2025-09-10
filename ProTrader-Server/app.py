@@ -371,6 +371,7 @@ from datetime import datetime, timezone
 
 
 def ensure_price_schema(conn: sqlite3.Connection):
+    """Ensure the HDV prices table and related indexes exist."""
     cur = conn.cursor()
     cur.execute("""
         CREATE TABLE IF NOT EXISTS hdv_prices (
@@ -382,7 +383,14 @@ def ensure_price_schema(conn: sqlite3.Connection):
                 DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
         )
     """)
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_hdv_prices_slug_dt ON hdv_prices(slug, datetime)")
+    # Index for lookups by slug and datetime
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_hdv_prices_slug_dt ON hdv_prices(slug, datetime)"
+    )
+    # Covering index used by frequent slug/qty queries
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_hdv_prices_slug_qty_dt ON hdv_prices(slug, qty, datetime)"
+    )
     conn.commit()
 
 def save_price_row(slug: str, qty: str, price: int, ts: int | None):
@@ -401,27 +409,6 @@ def save_price_row(slug: str, qty: str, price: int, ts: int | None):
         conn.commit()
     finally:
         conn.close()
-
-
-def ensure_price_schema(conn: sqlite3.Connection):
-    cur = conn.cursor()
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS hdv_prices (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            slug TEXT NOT NULL,
-            qty  TEXT NOT NULL CHECK(qty IN ('x1','x10','x100','x1000')),
-            price INTEGER NOT NULL,
-            datetime TEXT NOT NULL
-                DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
-        )
-    """)
-    # index existant
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_hdv_prices_slug_dt ON hdv_prices(slug, datetime)")
-    # index couvrant supplémentaire pour les filtres fréquents
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_hdv_prices_slug_qty_dt ON hdv_prices(slug, qty, datetime)")
-    conn.commit()
-
-
 
 from typing import Iterable, Tuple
 
