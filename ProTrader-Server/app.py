@@ -495,7 +495,15 @@ def list_hdv_resources(qty: str | None = Query(default=None, description="Filtre
         ORDER BY b.last_seen DESC
     """, (*params, limit))
     rows = cur.fetchall()
-    slugs = [dict(r) for r in rows]
+    slugs = []
+    for r in rows:
+        d = dict(r)
+        blob = d.get("img_blob")
+        if blob is not None and isinstance(blob, (bytes, bytearray)):
+            d["img_blob"] = base64.b64encode(blob).decode("ascii")
+        else:
+            d["img_blob"] = ""
+        slugs.append(d)
 
     if not slugs:
         conn.close()
