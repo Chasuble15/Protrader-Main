@@ -205,7 +205,8 @@ export default function Prices() {
         min: startMs,
         max: endMs,
         ticks: {
-          callback: (value: number) => new Date(value).toLocaleString(),
+          callback: (value: number) =>
+            new Date(value).toLocaleString("fr-FR", { timeZone: "UTC" }),
         },
       },
       y: {
@@ -219,7 +220,9 @@ export default function Prices() {
       tooltip: {
         callbacks: {
           title: (items: TooltipItem<"line">[]) =>
-            new Date(items[0].parsed.x as number).toLocaleString(),
+            new Date(items[0].parsed.x as number).toLocaleString("fr-FR", {
+              timeZone: "UTC",
+            }),
         },
       },
     },
