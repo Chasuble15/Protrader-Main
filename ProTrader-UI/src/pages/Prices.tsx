@@ -230,6 +230,31 @@ export default function Prices() {
             new Date(items[0].parsed.x as number).toLocaleString("fr-FR", {
               timeZone: "UTC",
             }),
+          label: (item: TooltipItem<"line">) => {
+            const label = item.dataset.label || "";
+            const value = item.parsed.y as number;
+            if (label.includes("moyenne") || label.includes("médiane")) {
+              return `${label}: ${formatPrice(value)} K`;
+            }
+            const parts: string[] = [`${label}: ${formatPrice(value)} K`];
+            const avg = showAvg ? avgValues[label] : null;
+            const med = showMedian ? medianValues[label] : null;
+            if (avg != null) {
+              const diff = value - avg;
+              const diffPerc = (diff / avg) * 100;
+              parts.push(
+                `Δ moy ${diff >= 0 ? "+" : ""}${formatPrice(diff)} K (${diffPerc >= 0 ? "+" : ""}${diffPerc.toFixed(1)}%)`,
+              );
+            }
+            if (med != null) {
+              const diff = value - med;
+              const diffPerc = (diff / med) * 100;
+              parts.push(
+                `Δ méd ${diff >= 0 ? "+" : ""}${formatPrice(diff)} K (${diffPerc >= 0 ? "+" : ""}${diffPerc.toFixed(1)}%)`,
+              );
+            }
+            return parts.join(" | ");
+          },
         },
       },
     },
