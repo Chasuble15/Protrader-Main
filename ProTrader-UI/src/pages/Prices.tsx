@@ -246,6 +246,7 @@ export default function Prices() {
             >
               <div className="w-10 h-10 rounded-md overflow-hidden bg-gray-100 flex items-center justify-center">
                 {r.img_blob ? (
+
                   <img src={imgSrc(r)} alt={r.name_fr || r.slug} className="w-full h-full object-cover" />
                 ) : (
                   <div className="text-xs text-gray-400">—</div>
