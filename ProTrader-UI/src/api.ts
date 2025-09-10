@@ -192,9 +192,12 @@ export async function saveAutoMode(auto: boolean): Promise<{ ok: boolean }> {
 
 export type HdvResource = {
   slug: string;
+  name_fr?: string;
+  img_blob?: string;
   points: number;
   last_seen: string;
   last_prices: Record<string, { price: number; datetime: string }>;
+  avg_unit_price?: number | null;
 };
 
 export async function listHdvResources(limit = 1000, qty?: string): Promise<HdvResource[]> {
