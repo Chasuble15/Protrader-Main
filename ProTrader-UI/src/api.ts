@@ -221,7 +221,7 @@ export async function getHdvTimeseries(
   slugs: string[],
   qty?: string,
   bucket = "day",
-  agg = "avg",
+  agg: string | null = "avg",
   start?: string,
   end?: string,
 ): Promise<TimeseriesSeries[]> {

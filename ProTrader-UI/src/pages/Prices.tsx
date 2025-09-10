@@ -76,7 +76,14 @@ export default function Prices() {
     }
     (async () => {
       try {
-        const ts = await getHdvTimeseries(selected, qty, "day", "avg", start || undefined, end || undefined);
+        const ts = await getHdvTimeseries(
+          selected,
+          qty,
+          "raw",
+          null,
+          start || undefined,
+          end || undefined,
+        );
         setSeries(ts);
       } catch (e) {
         console.error("Failed to load timeseries", e);
