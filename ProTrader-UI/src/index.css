@@ -1,0 +1,37 @@
+@import "tailwindcss";
+
+/* ---------- Base ---------- */
+@layer base {
+  html, body, #root { height: 100%; }
+  body { @apply bg-gray-50 text-gray-900 antialiased; }
+}
+
+/* ---------- Composants ---------- */
+@layer components {
+  /* Cartes / panneaux */
+  .card { @apply bg-white/80 backdrop-blur rounded-xl shadow-sm ring-1 ring-slate-200; }
+  .card-section { @apply border border-gray-200 rounded-lg p-3 bg-white shadow-sm; }
+  .toolbar { @apply flex items-center gap-2; }
+
+  /* Boutons */
+  .btn { @apply inline-flex items-center justify-center px-3 py-1.5 rounded-md border text-sm bg-white hover:bg-gray-50
+                 transition-colors disabled:opacity-50 disabled:pointer-events-none; }
+  .btn-primary   { @apply border-blue-600   text-blue-700   hover:bg-blue-50; }
+  .btn-secondary { @apply border-gray-300   text-gray-800   hover:bg-gray-50; }
+  .btn-accent    { @apply border-emerald-600 text-emerald-700 hover:bg-emerald-50; }
+  .btn-danger    { @apply border-red-600    text-red-700    hover:bg-red-50; }
+  .btn-outline   { @apply border-gray-300   text-gray-700   hover:bg-gray-50; }
+
+  /* Inputs */
+  .input { @apply border border-gray-300 rounded-md px-2 py-1 bg-white
+                  outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent; }
+
+  /* Tabs légers */
+  .tab { @apply px-3 py-1 rounded-md border bg-white hover:bg-gray-50; }
+  .tab-active { @apply bg-gray-100 text-gray-800; }
+
+  /* Petits chips d’état */
+  .chip { @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium border; }
+  .chip-ok { @apply border-emerald-600 text-emerald-700 bg-emerald-50; }
+  .chip-fail { @apply border-red-600 text-red-700 bg-red-50; }
+}

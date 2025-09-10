@@ -1,0 +1,18 @@
+base_dir: ./assets
+click_points:
+  point:
+    x: 1020
+    'y': 436
+    jitter: 5
+ocr_zones: {}
+templates:
+  btn_jouer: btn_jouer.png
+  ouvrir_hdv: ouvrir_hdv.png
+  est_en_jeu: est_en_jeu.png
+  attente_hdv: attente_hdv.png
+  frene: 38017.png
+settings:
+  monitor_index: 1
+  default_threshold: 0.88
+  thresholds:
+    btn_jouer: 0.9
