@@ -2,7 +2,7 @@ import { useState } from "react";
 import { NavLink, Routes, Route, useLocation } from "react-router-dom";
 import ConfigEditor from "./pages/ConfigEditor";
 import Home from "./pages/Home";
-import Logs from "./pages/Logs";
+import PricePoints from "./pages/PricePoints";
 import About from "./pages/About";
 import Prices from "./pages/Prices";
 
@@ -13,7 +13,7 @@ export default function App() {
     "/": "Accueil",
     "/prices": "Historique des prix",
     "/config": "Éditeur de configuration",
-    "/logs": "Journaux",
+    "/logs": "Gestion des prix",
     "/about": "À propos",
   };
   const currentTitle = titles[location.pathname] || "";
@@ -106,8 +106,8 @@ export default function App() {
                   ].join(" ")
                 }
               >
-                <span className="shrink-0">📜</span>
-                <span className="truncate">Journaux</span>
+                <span className="shrink-0">🗑️</span>
+                <span className="truncate">Gestion des prix</span>
               </NavLink>
               <NavLink
                 to="/about"
@@ -133,7 +133,7 @@ export default function App() {
             <Route path="/" element={<Home />} />
             <Route path="/prices" element={<Prices />} />
             <Route path="/config" element={<ConfigEditor />} />
-            <Route path="/logs" element={<Logs />} />
+            <Route path="/logs" element={<PricePoints />} />
             <Route path="/about" element={<About />} />
           </Routes>
         </main>

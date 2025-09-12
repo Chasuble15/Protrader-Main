@@ -721,3 +721,52 @@ def get_hdv_price_stat(
         value = statistics.median(prices)
 
     return {"slug": slug, "qty": qty, "stat": stat, "value": value, "points": len(prices)}
+
+
+@app.get("/api/hdv/price_points")
+def list_hdv_price_points(
+    slug: str | None = Query(default=None, description="Filtrer par slug"),
+    qty: str | None = Query(default=None, description="Filtrer par quantité"),
+    limit: int = Query(default=200, ge=1, le=1000),
+):
+    """Liste des points de prix bruts enregistrés."""
+    conn = get_db()
+    ensure_price_schema(conn)
+    cur = conn.cursor()
+
+    where: list[str] = []
+    params: list[Any] = []
+    if slug:
+        where.append("slug = ?")
+        params.append(slug)
+    if qty:
+        where.append("qty = ?")
+        params.append(qty)
+    where_sql = "WHERE " + " AND ".join(where) if where else ""
+
+    cur.execute(
+        f"""
+        SELECT id, slug, qty, price, datetime
+        FROM hdv_prices
+        {where_sql}
+        ORDER BY datetime DESC
+        LIMIT ?
+        """,
+        (*params, limit),
+    )
+    rows = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return {"points": rows}
+
+
+@app.delete("/api/hdv/price_points/{point_id}")
+def delete_hdv_price_point(point_id: int):
+    """Supprime un point de prix par identifiant."""
+    conn = get_db()
+    ensure_price_schema(conn)
+    cur = conn.cursor()
+    cur.execute("DELETE FROM hdv_prices WHERE id = ?", (point_id,))
+    conn.commit()
+    ok = cur.rowcount > 0
+    conn.close()
+    return {"ok": ok}
