@@ -1,4 +1,4 @@
-#!/root/protrader/backend/venv/bin/python3
+#!/root/Protrader-Main/ProTrader-Server/venv/bin/python
 # -*- coding: utf-8 -*-
 import re
 import sys
