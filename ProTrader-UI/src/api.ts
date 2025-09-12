@@ -261,3 +261,32 @@ export async function getHdvPriceStat(
   const data = await fetchJSON(url.toString());
   return data as HdvPriceStat;
 }
+
+// --- Raw price points management ------------------------------------------
+
+export type HdvPricePoint = {
+  id: number;
+  slug: string;
+  qty: string;
+  price: number;
+  datetime: string;
+};
+
+export async function listHdvPricePoints(
+  slug?: string,
+  qty?: string,
+  limit = 200,
+): Promise<HdvPricePoint[]> {
+  const url = new URL("/api/hdv/price_points", API_BASE);
+  if (slug) url.searchParams.set("slug", slug);
+  if (qty) url.searchParams.set("qty", qty);
+  if (limit) url.searchParams.set("limit", String(limit));
+  const data = await fetchJSON(url.toString());
+  return (data?.points ?? []) as HdvPricePoint[];
+}
+
+export async function deleteHdvPricePoint(id: number): Promise<{ ok: boolean }> {
+  const url = new URL(`/api/hdv/price_points/${id}`, API_BASE);
+  const data = await fetchJSON(url.toString(), { method: "DELETE" });
+  return data as { ok: boolean };
+}
