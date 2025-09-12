@@ -154,14 +154,14 @@ export default function ResourcePicker({
         <div className="flex items-center gap-2">
           <button
             onClick={handleReload}
-            className="btn btn-secondary"
+            className="text-sm px-3 py-2 rounded-xl border border-gray-300 hover:bg-gray-50"
             title="Recharger la sélection sauvegardée"
           >
             Recharger
           </button>
           <button
             onClick={handleSave}
-            className="btn btn-primary"
+            className="text-sm px-3 py-2 rounded-xl border border-gray-300 hover:bg-gray-50"
             title="Sauvegarder la sélection actuelle"
           >
             Sauvegarder
@@ -175,7 +175,11 @@ export default function ResourcePicker({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={placeholder}
-            className={cx("input w-full")}
+            className={cx(
+              "w-full rounded-2xl border px-4 py-2 outline-none",
+              "border-gray-300 focus:border-gray-400",
+              "shadow-sm"
+            )}
           />
           {loading && (
             <div className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-500">
@@ -186,7 +190,7 @@ export default function ResourcePicker({
         {!!query && (
           <button
             onClick={() => setQuery("")}
-            className="btn btn-secondary"
+            className="text-sm px-3 py-2 rounded-xl border border-gray-300 hover:bg-gray-50"
           >
             Effacer
           </button>
@@ -208,9 +212,7 @@ export default function ResourcePicker({
                 onClick={() => toggleSelect(it)}
                 className={cx(
                   "group w-full text-left rounded-2xl border p-3 transition hover:shadow-sm",
-                  isSelected
-                    ? "border-cds-interactive ring-2 ring-cds-interactive ring-opacity-50"
-                    : "border-cds-border"
+                  isSelected ? "border-blue-500 ring-2 ring-blue-200" : "border-gray-200"
                 )}
               >
                 <div className="flex items-center gap-3">
@@ -252,7 +254,7 @@ export default function ResourcePicker({
         ) : (
           <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {selected.map((it) => (
-              <li key={`sel-${it.id}`} className="rounded-2xl border border-cds-border p-3">
+              <li key={`sel-${it.id}`} className="rounded-2xl border border-gray-200 p-3">
                 <div className="flex items-center gap-3">
                   <div className="w-12 h-12 rounded-xl overflow-hidden bg-gray-100 flex items-center justify-center">
                     {it.img_blob ? (
@@ -268,7 +270,7 @@ export default function ResourcePicker({
                   </div>
                   <button
                     onClick={() => removeSelected(it.id)}
-                    className="ml-auto btn btn-secondary text-xs px-2 py-1"
+                    className="ml-auto text-xs px-2 py-1 border rounded-lg hover:bg-gray-50"
                     title="Retirer"
                   >
                     Retirer

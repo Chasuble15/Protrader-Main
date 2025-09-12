@@ -111,7 +111,7 @@ export default function Home() {
           <button
             onClick={onStartScript}
             disabled={busy || !agentConnected || selected.length === 0}
-            className="btn btn-primary px-4 py-2"
+            className="px-4 py-2 rounded-md border border-blue-600 text-blue-700 hover:bg-blue-50 disabled:opacity-50"
             title={
               selected.length === 0
                 ? "Sélection vide"
