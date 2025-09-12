@@ -111,6 +111,18 @@ async def ws_agent(ws: WebSocket):
                     print("[backend] save_price failed:", e)
 
                     print("[backend] from agent:", msg)
+            # Persistance du montant de kamas envoyé par l'agent
+            elif msg.get("type") == "kamas_value":
+                try:
+                    d = msg.get("data", {}) or {}
+                    save_kamas_row(
+                        amount=int(d.get("amount", 0)),
+                        ts=msg.get("ts")
+                    )
+                except Exception as e:
+                    print("[backend] save_kamas failed:", e)
+
+                    print("[backend] from agent:", msg)
             await broadcast_ui(msg)
     except WebSocketDisconnect:
         pass
@@ -406,6 +418,41 @@ def save_price_row(slug: str, qty: str, price: int, ts: int | None):
         conn.execute(
             "INSERT INTO hdv_prices (slug, qty, price, datetime) VALUES (?,?,?,?)",
             (slug, qty, int(price), iso)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# --- KAMAS: historique de la fortune -----------------------------------------
+def ensure_kamas_schema(conn: sqlite3.Connection):
+    """Ensure the table storing kamas history exists."""
+    cur = conn.cursor()
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS kamas_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            amount INTEGER NOT NULL,
+            datetime TEXT NOT NULL
+                DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+        )
+        """
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_kamas_history_dt ON kamas_history(datetime)"
+    )
+    conn.commit()
+
+
+def save_kamas_row(amount: int, ts: int | None):
+    conn = get_db()
+    try:
+        ensure_kamas_schema(conn)
+        iso = datetime.fromtimestamp(ts, tz=timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ') if ts else \
+              datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        conn.execute(
+            "INSERT INTO kamas_history (amount, datetime) VALUES (?, ?)",
+            (int(amount), iso)
         )
         conn.commit()
     finally:

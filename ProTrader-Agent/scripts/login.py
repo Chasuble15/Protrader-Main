@@ -55,6 +55,21 @@ def _send_price(slug: str, qty: str, price: int) -> None:
         print("[WARN] bus.client indisponible, payload:", frame)
 
 
+def _send_kamas(amount: int) -> None:
+    """Envoie le montant de kamas courant au serveur."""
+    frame = {
+        "type": "kamas_value",
+        "ts": int(time.time()),
+        "data": {
+            "amount": int(amount),
+        },
+    }
+    if bus.client:
+        bus.client.send(frame)
+    else:
+        print("[WARN] bus.client indisponible, payload:", frame)
+
+
 def on_enter_lancement(fsm):
     _send_state("LANCEMENT")
     open_dofus()
@@ -266,6 +281,7 @@ def on_tick_get_kamas(fsm):
 
         if val is not None:
             logger.info("Fortune actuelle : %d K", val)
+            _send_kamas(val)
             return "ENTRER_RESSOURCE"
 
 
