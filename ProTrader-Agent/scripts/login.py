@@ -119,7 +119,7 @@ def on_tick_attente_hdv(fsm):
 
     if res:
         time.sleep(1)
-        return "ENTRER_RESSOURCE"
+        return "GET_KAMAS"
 
 
 
@@ -255,7 +255,7 @@ def on_enter_get_kamas(fsm):
 def on_tick_get_kamas(fsm):
     # Rechercher le symbole de kamas dans l'interface
     res = find_template_on_screen(
-        template_path=str(RECHERCHE_PATH),
+        template_path=str(KAMAS_PATH),
         debug=True,
     )
 
