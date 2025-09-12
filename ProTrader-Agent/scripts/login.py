@@ -12,6 +12,9 @@ from utils.keyboard import type_text
 from utils.vision import find_template_on_screen, find_template_on_screen_alpha
 from utils.ocr import ocr_read_int
 
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 import bus
 
@@ -25,6 +28,7 @@ QTE_X10_PATH = Path(config["base_dir"]) / config["templates"]["qte_x10"]
 QTE_X100_PATH = Path(config["base_dir"]) / config["templates"]["qte_x100"]
 QTE_X1000_PATH = Path(config["base_dir"]) / config["templates"]["qte_x1000"]
 RECHERCHE_PATH = Path(config["base_dir"]) / config["templates"]["recherche"]
+KAMAS_PATH = Path(config["base_dir"]) / config["templates"]["kamas"]
 
 def _send_state(name: str) -> None:
     """Envoie l'état courant au serveur si le client est disponible."""
@@ -245,6 +249,27 @@ def on_enter_end(fsm):
         os.system("shutdown -h now")
 
 
+def on_enter_get_kamas(fsm):
+    _send_state("GET_KAMAS")
+
+def on_tick_get_kamas(fsm):
+    # Rechercher le symbole de kamas dans l'interface
+    res = find_template_on_screen(
+        template_path=str(RECHERCHE_PATH),
+        debug=True,
+    )
+
+    if res:
+        # Si trouvé, lire le montant de kamas via OCR
+        ocrzone = (res.left - 250, res.top, 245, res.height)
+        val = ocr_read_int(ocrzone, debug=True)
+
+        if val is not None:
+            logger.info("Fortune actuelle : %d K", val)
+            return "ENTRER_RESSOURCE"
+
+
+
 states = {
     "LANCEMENT": StateDef("LANCEMENT", on_enter=on_enter_lancement, on_tick=on_tick_lancement),
     "ATTENTE_CONNEXION": StateDef(
@@ -253,6 +278,7 @@ states = {
     "EN_JEU": StateDef("EN_JEU", on_enter=on_enter_en_jeu),
     "OUVRIR_HDV": StateDef("OUVRIR_HDV", on_enter=on_enter_ouvrir_hdv, on_tick=on_tick_ouvrir_hdv),
     "ATTENTE_HDV": StateDef("ATTENTE_HDV", on_enter=on_enter_attente_hdv, on_tick=on_tick_attente_hdv),
+    "GET_KAMAS": StateDef("GET_KAMAS", on_enter=on_enter_get_kamas, on_tick=on_tick_get_kamas),
     "ENTRER_RESSOURCE": StateDef("ENTRER_RESSOURCE", on_enter=on_enter_entrer_ressource),
     "SELECTION_RESSOURCE": StateDef("SELECTION_RESSOURCE", on_enter=on_enter_selection_ressource, on_tick=on_tick_selection_ressource),
     "SCAN_PRIX": StateDef("SCAN_PRIX", on_enter=on_enter_scan_prix, on_tick=on_tick_scan_prix),
