@@ -199,8 +199,13 @@ export default function Fortune() {
                   }
                   const profit =
                     median != null && purchase != null ? median - purchase : null;
-                  return (
-                    <tr key={key} className="border-b last:border-0">
+                    return (
+                      <tr
+                        key={key}
+                        className={`border-b last:border-0 ${
+                          cfg.active ? "" : "bg-gray-50 text-gray-500"
+                        }`}
+                      >
                       <td className="p-2">
                         <div className="flex items-center gap-2">
                           {it.img_blob ? (
