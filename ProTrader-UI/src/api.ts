@@ -265,8 +265,7 @@ export type HdvPriceStat = {
 };
 
 /**
- * Fetch a simple statistic (average or median) of unit prices for a resource
- * and convert it to a lot price based on the requested quantity.
+ * Fetch a simple statistic (average or median) of lot prices for a resource.
  */
 export async function getHdvPriceStat(
   slug: string,
@@ -281,12 +280,7 @@ export async function getHdvPriceStat(
   url.searchParams.set("stat", stat);
   if (start) url.searchParams.set("date_from", new Date(start).toISOString());
   if (end) url.searchParams.set("date_to", new Date(end).toISOString());
-  const data = (await fetchJSON(url.toString())) as HdvPriceStat;
-  const qtyNum = Number(qty.slice(1));
-  return {
-    ...data,
-    value: data.value != null ? data.value * qtyNum : null,
-  };
+  return (await fetchJSON(url.toString())) as HdvPriceStat;
 }
 
 // --- Raw price points management ------------------------------------------
