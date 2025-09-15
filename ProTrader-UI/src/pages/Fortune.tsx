@@ -4,7 +4,7 @@ import { Line } from "react-chartjs-2";
 import {
   getKamasHistory,
   loadSelection,
-  getHdvPriceStat,
+  getHdvTimeseries,
   type Item,
   type KamasPoint,
 } from "../api";
@@ -20,6 +20,15 @@ const parseTimestamp = (t: string): number => {
 };
 
 const QTY_LIST = ["x1", "x10", "x100", "x1000"] as const;
+
+const median = (values: number[]): number | null => {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0
+    ? (sorted[mid - 1] + sorted[mid]) / 2
+    : sorted[mid];
+};
 
 export default function Fortune() {
   const [points, setPoints] = useState<KamasPoint[]>([]);
@@ -62,12 +71,20 @@ export default function Fortune() {
         await Promise.all(
           QTY_LIST.map(async (qty) => {
             try {
-              const stat = await getHdvPriceStat(it.slug_fr, qty, "median", start, end);
-              qmap[qty] = stat.value ?? null;
+              const series = await getHdvTimeseries(
+                [it.slug_fr],
+                qty,
+                "raw",
+                null,
+                start,
+                end,
+              );
+              const prices = series[0]?.points.map((p) => p.price ?? p.value ?? 0) ?? [];
+              qmap[qty] = median(prices);
             } catch {
               qmap[qty] = null;
             }
-          })
+          }),
         );
         map[it.slug_fr] = qmap;
       }
