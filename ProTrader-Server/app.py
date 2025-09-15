@@ -249,13 +249,20 @@ def get_selected_items() -> List[Dict[str, Any]]:
 # Crée la table si besoin
 def ensure_selection_schema(conn: sqlite3.Connection):
     cur = conn.cursor()
-    cur.execute("""
+    cur.execute(
+        """
         CREATE TABLE IF NOT EXISTS selection_items (
             item_id INTEGER NOT NULL PRIMARY KEY,
-            position INTEGER NOT NULL
+            position INTEGER NOT NULL,
+            settings TEXT DEFAULT '{}'
             -- on pourrait ajouter created_at/updated_at si besoin
         )
-    """)
+        """
+    )
+    try:
+        cur.execute("ALTER TABLE selection_items ADD COLUMN settings TEXT DEFAULT '{}' ")
+    except Exception:
+        pass
     conn.commit()
 
 
@@ -286,14 +293,23 @@ def get_selection():
     cur = conn.cursor()
 
     # on récupère les items dans l'ordre de selection_items.position
-    cur.execute("""
-        SELECT i.id, i.name_fr, i.slug_fr, i.level, i.img_blob
+    cur.execute(
+        """
+        SELECT i.id, i.name_fr, i.slug_fr, i.level, i.img_blob, s.settings
         FROM selection_items s
         JOIN items i ON i.id = s.item_id
         ORDER BY s.position ASC
-    """)
+        """
+    )
     rows = cur.fetchall()
-    items = [row_to_item(r) for r in rows]
+    items: List[Dict[str, Any]] = []
+    for r in rows:
+        it = row_to_item(r)
+        try:
+            it["settings"] = json.loads(r["settings"] or "{}")
+        except Exception:
+            it["settings"] = {}
+        items.append(it)
     conn.close()
     return {"items": items}
 
@@ -309,7 +325,7 @@ def save_selection(body: SaveSelectionBody):
         cur.execute("DELETE FROM selection_items")
         for pos, item_id in enumerate(body.ids):
             cur.execute(
-                "INSERT INTO selection_items (item_id, position) VALUES (?, ?)",
+                "INSERT INTO selection_items (item_id, position, settings) VALUES (?, ?, '{}')",
                 (item_id, pos)
             )
         conn.commit()
@@ -319,6 +335,55 @@ def save_selection(body: SaveSelectionBody):
     finally:
         conn.close()
     return {"ok": True, "count": len(body.ids)}
+
+
+class SelectionSetting(BaseModel):
+    item_id: int
+    qty: str
+    margin_type: str
+    margin_value: float
+    active: bool
+
+
+class SaveSelectionSettingsBody(BaseModel):
+    items: List[SelectionSetting]
+
+
+@app.post("/api/selection_settings")
+def save_selection_settings(body: SaveSelectionSettingsBody):
+    conn = get_db()
+    ensure_selection_schema(conn)
+    cur = conn.cursor()
+    try:
+        cur.execute("BEGIN")
+        for s in body.items:
+            cur.execute(
+                "SELECT settings FROM selection_items WHERE item_id = ?",
+                (s.item_id,),
+            )
+            row = cur.fetchone()
+            data = {}
+            if row and row["settings"]:
+                try:
+                    data = json.loads(row["settings"])
+                except Exception:
+                    data = {}
+            data[s.qty] = {
+                "margin_type": s.margin_type,
+                "margin_value": s.margin_value,
+                "active": s.active,
+            }
+            cur.execute(
+                "UPDATE selection_items SET settings = ? WHERE item_id = ?",
+                (json.dumps(data), s.item_id),
+            )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, f"Failed to save selection settings: {e}")
+    finally:
+        conn.close()
+    return {"ok": True, "count": len(body.items)}
 
 
 @app.get("/api/auto_mode")

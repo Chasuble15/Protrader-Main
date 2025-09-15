@@ -5,7 +5,8 @@ import {
   getKamasHistory,
   loadSelection,
   getHdvPriceStat,
-  type Item,
+  saveSelectionSettings,
+  type SelectedItem,
   type KamasPoint,
   type Qty,
 } from "../api";
@@ -24,8 +25,11 @@ const QTY_LIST: Qty[] = ["x1", "x10", "x100", "x1000"];
 
 export default function Fortune() {
   const [points, setPoints] = useState<KamasPoint[]>([]);
-  const [items, setItems] = useState<Item[]>([]);
+  const [items, setItems] = useState<SelectedItem[]>([]);
   const [medianMap, setMedianMap] = useState<Record<string, Record<Qty, number | null>>>({});
+  const [settings, setSettings] = useState<
+    Record<string, { marginType: "percent" | "absolute"; value: number; active: boolean }>
+  >({});
 
   useEffect(() => {
     (async () => {
@@ -43,6 +47,18 @@ export default function Fortune() {
       try {
         const sel = await loadSelection();
         setItems(sel);
+        const map: Record<string, { marginType: "percent" | "absolute"; value: number; active: boolean }> = {};
+        sel.forEach((it) => {
+          QTY_LIST.forEach((qty) => {
+            const s = it.settings?.[qty];
+            map[`${it.id}-${qty}`] = {
+              marginType: s?.margin_type === "absolute" ? "absolute" : "percent",
+              value: s?.margin_value ?? 0,
+              active: s?.active ?? true,
+            };
+          });
+        });
+        setSettings(map);
       } catch (e) {
         console.error("Failed to load selection", e);
       }
@@ -76,7 +92,7 @@ export default function Fortune() {
     })();
   }, [items]);
 
-  const imgSrc = (it: Item) => {
+  const imgSrc = (it: SelectedItem) => {
     if (!it.img_blob) return "";
     const maybePng = it.img_blob.startsWith("iVBOR");
     const mime = maybePng ? "image/png" : "image/jpeg";
@@ -84,6 +100,31 @@ export default function Fortune() {
   };
 
   const formatKamas = (v: number) => `${Math.round(v).toLocaleString("fr-FR")} K`;
+
+  const updateSetting = (
+    key: string,
+    patch: Partial<{ marginType: "percent" | "absolute"; value: number; active: boolean }>,
+  ) => {
+    setSettings((prev) => ({ ...prev, [key]: { ...prev[key], ...patch } }));
+  };
+
+  const handleSave = async () => {
+    try {
+      const payload = Object.entries(settings).map(([k, v]) => {
+        const [idStr, qty] = k.split("-");
+        return {
+          item_id: Number(idStr),
+          qty: qty as Qty,
+          margin_type: v.marginType,
+          margin_value: v.value,
+          active: v.active,
+        };
+      });
+      await saveSelectionSettings(payload);
+    } catch (e) {
+      console.error("Failed to save settings", e);
+    }
+  };
 
   const data = {
     datasets: [
@@ -137,39 +178,103 @@ export default function Fortune() {
                 <th className="p-2">Ressource</th>
                 <th className="p-2">Quantité</th>
                 <th className="p-2">Prix médian du lot (K)</th>
+                <th className="p-2">Marge</th>
+                <th className="p-2">Valeur</th>
+                <th className="p-2">Valeur achat (K)</th>
+                <th className="p-2">Bénéfice estimé (K)</th>
+                <th className="p-2">Actif</th>
               </tr>
             </thead>
             <tbody>
               {items.flatMap((it) =>
-                QTY_LIST.map((qty) => (
-                  <tr key={`${it.id}-${qty}`} className="border-b last:border-0">
-                    <td className="p-2">
-                      <div className="flex items-center gap-2">
-                        {it.img_blob ? (
-                          // eslint-disable-next-line jsx-a11y/alt-text
-                          <img
-                            src={imgSrc(it)}
-                            alt={it.name_fr}
-                            className="w-6 h-6 rounded object-cover"
-                          />
-                        ) : (
-                          <div className="w-6 h-6 bg-gray-200 rounded" />
-                        )}
-                        <span className="truncate">{it.name_fr}</span>
-                      </div>
-                    </td>
-                    <td className="p-2">{qty}</td>
-                    <td className="p-2">
-                      {(() => {
-                        const v = medianMap[it.slug_fr]?.[qty];
-                        return v != null ? formatKamas(v) : "—";
-                      })()}
-                    </td>
-                  </tr>
-                ))
+                QTY_LIST.map((qty) => {
+                  const key = `${it.id}-${qty}`;
+                  const cfg = settings[key] || { marginType: "percent", value: 0, active: true };
+                  const median = medianMap[it.slug_fr]?.[qty] ?? null;
+                  let purchase: number | null = null;
+                  if (cfg.marginType === "percent") {
+                    purchase = median != null ? median * (1 - cfg.value / 100) : null;
+                  } else {
+                    purchase = cfg.value;
+                  }
+                  const profit =
+                    median != null && purchase != null ? median - purchase : null;
+                  return (
+                    <tr key={key} className="border-b last:border-0">
+                      <td className="p-2">
+                        <div className="flex items-center gap-2">
+                          {it.img_blob ? (
+                            // eslint-disable-next-line jsx-a11y/alt-text
+                            <img
+                              src={imgSrc(it)}
+                              alt={it.name_fr}
+                              className="w-6 h-6 rounded object-cover"
+                            />
+                          ) : (
+                            <div className="w-6 h-6 bg-gray-200 rounded" />
+                          )}
+                          <span className="truncate">{it.name_fr}</span>
+                        </div>
+                      </td>
+                      <td className="p-2">{qty}</td>
+                      <td className="p-2">
+                        {median != null ? formatKamas(median) : "—"}
+                      </td>
+                      <td className="p-2">
+                        <select
+                          className="border rounded px-1 py-0.5 text-sm"
+                          value={cfg.marginType}
+                          onChange={(e) =>
+                            updateSetting(key, {
+                              marginType: e.target.value as "percent" | "absolute",
+                            })
+                          }
+                          disabled={!cfg.active}
+                        >
+                          <option value="percent">Pourcent</option>
+                          <option value="absolute">Absolu</option>
+                        </select>
+                      </td>
+                      <td className="p-2">
+                        <input
+                          type="number"
+                          className="border rounded px-1 py-0.5 w-24 text-sm"
+                          value={cfg.value}
+                          onChange={(e) =>
+                            updateSetting(key, { value: Number(e.target.value) })
+                          }
+                          disabled={!cfg.active}
+                        />
+                      </td>
+                      <td className="p-2">
+                        {purchase != null ? formatKamas(purchase) : "—"}
+                      </td>
+                      <td className="p-2">
+                        {profit != null ? formatKamas(profit) : "—"}
+                      </td>
+                      <td className="p-2 text-center">
+                        <input
+                          type="checkbox"
+                          checked={cfg.active}
+                          onChange={(e) =>
+                            updateSetting(key, { active: e.target.checked })
+                          }
+                        />
+                      </td>
+                    </tr>
+                  );
+                }),
               )}
             </tbody>
           </table>
+          <div className="mt-4">
+            <button
+              onClick={handleSave}
+              className="px-3 py-2 rounded-xl border border-gray-300 hover:bg-gray-50"
+            >
+              Sauvegarder
+            </button>
+          </div>
         </div>
       )}
     </div>
