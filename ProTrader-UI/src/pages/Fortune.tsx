@@ -83,7 +83,7 @@ export default function Fortune() {
     return `data:${mime};base64,${it.img_blob}`;
   };
 
-  const formatKamas = (v: number) => `${Math.round(v / 1000).toLocaleString("fr-FR")} K`;
+  const formatKamas = (v: number) => `${Math.round(v).toLocaleString("fr-FR")} K`;
 
   const data = {
     datasets: [
