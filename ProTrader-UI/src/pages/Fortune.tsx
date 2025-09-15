@@ -167,7 +167,7 @@ export default function Fortune() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 bg-white -m-4 p-4 min-h-full">
       <h2 className="text-lg font-semibold">Fortune</h2>
       <Line data={data} options={options} />
       {items.length > 0 && (
@@ -203,7 +203,9 @@ export default function Fortune() {
                       <tr
                         key={key}
                         className={`border-b last:border-0 ${
-                          cfg.active ? "" : "bg-gray-50 text-gray-500"
+                          cfg.active
+                            ? "bg-sky-50 font-medium"
+                            : "bg-gray-50 text-gray-500"
                         }`}
                       >
                       <td className="p-2">
