@@ -209,6 +209,31 @@ def save_auto_mode_to_db(auto: bool) -> None:
         conn.close()
 
 
+def load_trade_mode_from_db() -> bool:
+    conn = get_db()
+    try:
+        ensure_settings_schema(conn)
+        cur = conn.cursor()
+        cur.execute("SELECT value FROM settings WHERE key='trade_mode'")
+        row = cur.fetchone()
+        return bool(row and row["value"] == "1")
+    finally:
+        conn.close()
+
+
+def save_trade_mode_to_db(trade: bool) -> None:
+    conn = get_db()
+    try:
+        ensure_settings_schema(conn)
+        conn.execute(
+            "REPLACE INTO settings (key, value) VALUES ('trade_mode', ?)",
+            ("1" if trade else "0",),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def get_selected_slugs() -> List[str]:
     conn = get_db()
     try:
@@ -395,6 +420,18 @@ def get_auto_mode_endpoint():
 def save_auto_mode_endpoint(body: Dict[str, Any] = Body(...)):
     auto = bool(body.get("auto"))
     save_auto_mode_to_db(auto)
+    return {"ok": True}
+
+
+@app.get("/api/trade_mode")
+def get_trade_mode_endpoint():
+    return {"trade": load_trade_mode_from_db()}
+
+
+@app.post("/api/trade_mode")
+def save_trade_mode_endpoint(body: Dict[str, Any] = Body(...)):
+    trade = bool(body.get("trade"))
+    save_trade_mode_to_db(trade)
     return {"ok": True}
 
 

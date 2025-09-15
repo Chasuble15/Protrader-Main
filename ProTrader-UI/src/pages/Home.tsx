@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { makeUIWebSocket, sendCommand, loadAutoMode, saveAutoMode } from "../api";
+import { makeUIWebSocket, sendCommand, loadAutoMode, saveAutoMode, loadTradeMode, saveTradeMode } from "../api";
 import type { Item } from "../api";
 import ResourcePicker from "../components/ResourcePicker";
 import Card from "../components/Card";
@@ -12,6 +12,7 @@ export default function Home() {
   const [log, setLog] = useState<string[]>([]);
   const [selected, setSelected] = useState<Item[]>([]);
   const [autoMode, setAutoMode] = useState(false);
+  const [tradeMode, setTradeMode] = useState(false);
 
   // WebSocket pour suivre le statut de l’agent
   useEffect(() => {
@@ -29,12 +30,19 @@ export default function Home() {
 
   useEffect(() => {
     loadAutoMode().then((v) => setAutoMode(!!v)).catch(() => {});
+    loadTradeMode().then((v) => setTradeMode(!!v)).catch(() => {});
   }, []);
 
   async function toggleAutoMode() {
     const v = !autoMode;
     setAutoMode(v);
     try { await saveAutoMode(v); } catch {}
+  }
+
+  async function toggleTradeMode() {
+    const v = !tradeMode;
+    setTradeMode(v);
+    try { await saveTradeMode(v); } catch {}
   }
 
   function buildStartArgs(items: Item[]) {
@@ -87,6 +95,15 @@ export default function Home() {
             className="h-4 w-4"
           />
           <span>Mode auto</span>
+        </label>
+        <label className="mt-2 flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={tradeMode}
+            onChange={toggleTradeMode}
+            className="h-4 w-4"
+          />
+          <span>Mode achat/revente</span>
         </label>
       </Card>
 

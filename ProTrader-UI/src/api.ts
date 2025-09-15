@@ -215,6 +215,25 @@ export async function saveAutoMode(auto: boolean): Promise<{ ok: boolean }> {
   return data as { ok: boolean };
 }
 
+export async function loadTradeMode(): Promise<boolean> {
+  const url = new URL("/api/trade_mode", API_BASE);
+  const data = await fetchJSON(url.toString());
+  return !!data?.trade;
+}
+
+export async function saveTradeMode(trade: boolean): Promise<{ ok: boolean }> {
+  const url = new URL("/api/trade_mode", API_BASE);
+  const data = await fetchJSON(
+    url.toString(),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ trade }),
+    }
+  );
+  return data as { ok: boolean };
+}
+
 // KAMAS -------------------------------------------------------------------
 
 export type KamasPoint = { t: string; amount: number };
