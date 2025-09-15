@@ -74,6 +74,8 @@ async def ws_agent(ws: WebSocket):
                     for idx, it in enumerate(items)
                 ],
             }
+            if load_trade_mode_from_db():
+                args["fortune_lines"] = get_active_fortune_lines()
             cmd = {
                 "type": "command",
                 "command_id": int(time.time()*1000),
@@ -139,6 +141,8 @@ async def post_cmd(body: Dict[str, Any] = Body(...)):
         "cmd": body.get("cmd", ""),
         "args": body.get("args", {}) or {}
     }
+    if cmd["cmd"] == "start_script" and load_trade_mode_from_db():
+        cmd["args"]["fortune_lines"] = get_active_fortune_lines()
     if agent_ws is None:
         pending_cmds.append(cmd)
         return {"status":"queued", "command_id": cmd["command_id"]}
@@ -268,6 +272,47 @@ def get_selected_items() -> List[Dict[str, Any]]:
         )
         rows = cur.fetchall()
         return [row_to_item(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def get_active_fortune_lines() -> List[Dict[str, Any]]:
+    """Return active selection settings lines from selection_items."""
+    conn = get_db()
+    try:
+        ensure_selection_schema(conn)
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT s.item_id, s.settings, i.slug_fr
+            FROM selection_items s
+            JOIN items i ON i.id = s.item_id
+            ORDER BY s.position ASC
+            """
+        )
+        rows = cur.fetchall()
+        lines: List[Dict[str, Any]] = []
+        for r in rows:
+            settings = r["settings"] or "{}"
+            try:
+                data = json.loads(settings)
+            except Exception:
+                data = {}
+            for qty, cfg in data.items():
+                if isinstance(cfg, dict) and cfg.get("active"):
+                    lines.append(
+                        {
+                            "item_id": r["item_id"],
+                            "slug": r["slug_fr"],
+                            "qty": qty,
+                            "margin_type": cfg.get("margin_type"),
+                            "margin_value": cfg.get("margin_value"),
+                        }
+                    )
+        return lines
+    except Exception as e:  # pragma: no cover - best effort
+        print("[backend] get_active_fortune_lines failed:", e)
+        return []
     finally:
         conn.close()
 

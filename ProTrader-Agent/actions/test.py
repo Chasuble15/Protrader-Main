@@ -31,7 +31,14 @@ def _resolve_temp_dir() -> Path:
 @register("start_script")
 def start_script(args: Dict[str, Any], cmd_id: str) -> Dict[str, Any]:
     items = (args or {}).get("items") or []
-    logger.info("start_script called with %d item(s)", len(items))
+    fortune_lines = (args or {}).get("fortune_lines") or []
+    logger.info(
+        "start_script called with %d item(s) and %d fortune line(s)",
+        len(items),
+        len(fortune_lines),
+    )
+    if fortune_lines:
+        logger.info("fortune lines: %s", fortune_lines)
     if not items:
         return {
             "type": "script_result",
