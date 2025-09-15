@@ -133,6 +133,10 @@ export type Item = {
   img_blob: string; // base64 (sans data: prefix)
 };
 
+export type SelectedItem = Item & {
+  settings?: Partial<Record<Qty, { margin_type: "percent" | "absolute"; margin_value: number; active: boolean }>>;
+};
+
 export async function searchItems(query: string, limit = 20): Promise<Item[]> {
   const url = new URL("/api/items", API_BASE);
   if (query) url.searchParams.set("query", query);
@@ -150,10 +154,10 @@ export async function getItemsByIds(ids: number[], limit = 200): Promise<Item[]>
   return (data?.items ?? []) as Item[];
 }
 
-export async function loadSelection(): Promise<Item[]> {
+export async function loadSelection(): Promise<SelectedItem[]> {
   const url = new URL("/api/selection", API_BASE);
   const data = await fetchJSON(url.toString());
-  return (data?.items ?? []) as Item[];
+  return (data?.items ?? []) as SelectedItem[];
 }
 
 export async function saveSelection(ids: number[]): Promise<{ ok: boolean; count: number }> {
@@ -165,6 +169,29 @@ export async function saveSelection(ids: number[]): Promise<{ ok: boolean; count
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ids }),
     }
+  );
+  return data as { ok: boolean; count: number };
+}
+
+export type SelectionSetting = {
+  item_id: number;
+  qty: Qty;
+  margin_type: "percent" | "absolute";
+  margin_value: number;
+  active: boolean;
+};
+
+export async function saveSelectionSettings(
+  items: SelectionSetting[],
+): Promise<{ ok: boolean; count: number }> {
+  const url = new URL("/api/selection_settings", API_BASE);
+  const data = await fetchJSON(
+    url.toString(),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items }),
+    },
   );
   return data as { ok: boolean; count: number };
 }
