@@ -34,7 +34,7 @@ export default function Fortune() {
   useEffect(() => {
     (async () => {
       try {
-        const pts = await getKamasHistory("day");
+        const pts = await getKamasHistory("raw");
         setPoints(pts);
       } catch (e) {
         console.error("Failed to load kamas history", e);
@@ -130,12 +130,28 @@ export default function Fortune() {
     datasets: [
       {
         label: "Kamas",
-        data: points.map((p) => ({ x: parseTimestamp(p.t), y: p.amount })),
+        data: points.map((p) => ({
+          x: parseTimestamp(p.t),
+          y: p.amount,
+          rawTimestamp: p.t,
+        })),
         borderColor: "#f59e0b",
         backgroundColor: "#f59e0b",
         tension: 0.1,
       },
     ],
+  };
+
+  const formatDateTime = (value: number | string) => {
+    const timestamp = typeof value === "number" ? value : Number(value);
+    if (!Number.isFinite(timestamp)) {
+      return String(value);
+    }
+    return new Date(timestamp).toLocaleString("fr-FR", {
+      dateStyle: "short",
+      timeStyle: "medium",
+      timeZone: "UTC",
+    });
   };
 
   const options = {
@@ -145,8 +161,7 @@ export default function Fortune() {
       x: {
         type: "linear" as const,
         ticks: {
-          callback: (value: number) =>
-            new Date(value).toLocaleString("fr-FR", { timeZone: "UTC" }),
+          callback: (value: number | string) => formatDateTime(value),
         },
       },
       y: {
@@ -158,8 +173,13 @@ export default function Fortune() {
       legend: { display: false },
       tooltip: {
         callbacks: {
-          title: (items: any[]) =>
-            new Date(items[0].parsed.x as number).toLocaleString("fr-FR", { timeZone: "UTC" }),
+          title: (items: any[]) => {
+            const raw = items[0]?.raw as { rawTimestamp?: string; x: number };
+            if (raw?.rawTimestamp) {
+              return raw.rawTimestamp.replace("T", " ").replace("Z", " UTC");
+            }
+            return formatDateTime(items[0].parsed.x as number);
+          },
           label: (item: any) => `${item.parsed.y as number} K`,
         },
       },
