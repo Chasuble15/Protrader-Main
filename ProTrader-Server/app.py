@@ -790,7 +790,7 @@ def get_hdv_price_stat(
     date_to: str | None = Query(default=None, description="Fin (ISO8601)"),
     stat: str = Query(default="avg", pattern="^(avg|median)$"),
 ):
-    """Retourne une statistique simple (moyenne ou médiane) pour une ressource."""
+    """Retourne une statistique simple (moyenne ou médiane) du prix du lot."""
     conn = get_db()
     ensure_price_schema(conn)
     cur = conn.cursor()
