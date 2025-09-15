@@ -199,8 +199,8 @@ export async function getKamasHistory(
 ): Promise<KamasPoint[]> {
   const url = new URL("/api/kamas_history", API_BASE);
   if (bucket) url.searchParams.set("bucket", bucket);
-  if (start) url.searchParams.set("start", new Date(start).toISOString());
-  if (end) url.searchParams.set("end", new Date(end).toISOString());
+  if (start) url.searchParams.set("date_from", new Date(start).toISOString());
+  if (end) url.searchParams.set("date_to", new Date(end).toISOString());
   const data = await fetchJSON(url.toString());
   return (data?.points ?? []) as KamasPoint[];
 }
@@ -248,8 +248,8 @@ export async function getHdvTimeseries(
   if (qty) url.searchParams.set("qty", qty);
   if (bucket) url.searchParams.set("bucket", bucket);
   if (agg) url.searchParams.set("agg", agg);
-  if (start) url.searchParams.set("start", new Date(start).toISOString());
-  if (end) url.searchParams.set("end", new Date(end).toISOString());
+  if (start) url.searchParams.set("date_from", new Date(start).toISOString());
+  if (end) url.searchParams.set("date_to", new Date(end).toISOString());
   const data = await fetchJSON(url.toString());
   return (data?.series ?? []) as TimeseriesSeries[];
 }
