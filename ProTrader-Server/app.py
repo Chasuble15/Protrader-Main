@@ -460,6 +460,68 @@ def save_kamas_row(amount: int, ts: int | None):
 
 from typing import Iterable, Tuple
 
+
+@app.get("/api/kamas_history")
+def get_kamas_history(
+    start: str | None = Query(default=None, description="Début (ISO8601)"),
+    end: str | None = Query(default=None, description="Fin (ISO8601)"),
+    bucket: str = Query(default="raw", pattern="^(raw|minute|hour|day)$"),
+    limit: int = Query(default=10000, ge=1, le=200000),
+):
+    conn = get_db()
+    ensure_kamas_schema(conn)
+    cur = conn.cursor()
+
+    dt_from, dt_to = _parse_iso_to_utc_bounds(start, end)
+
+    where = []
+    params: list[Any] = []
+    if dt_from:
+        if len(dt_from) == 10:
+            where.append("datetime >= ?")
+            params.append(dt_from + "T00:00:00Z")
+        else:
+            where.append("datetime >= ?")
+            params.append(dt_from)
+    if dt_to:
+        if len(dt_to) == 10:
+            where.append("datetime < ?")
+            params.append(dt_to + "T23:59:59Z")
+        else:
+            where.append("datetime <= ?")
+            params.append(dt_to)
+
+    where_sql = "WHERE " + " AND ".join(where) if where else ""
+
+    bucket_sql = _bucket_expr(bucket)
+    points: list[dict] = []
+
+    if bucket_sql is None:
+        cur.execute(
+            f"SELECT amount, datetime FROM kamas_history {where_sql} ORDER BY datetime ASC LIMIT ?",
+            (*params, limit),
+        )
+        rows = cur.fetchall()
+        points = [{"t": r["datetime"], "amount": r["amount"]} for r in rows]
+    else:
+        cur.execute(
+            f"""SELECT {bucket_sql} AS bucket_ts, AVG(amount) AS value
+                 FROM kamas_history
+                 {where_sql}
+                 GROUP BY bucket_ts
+                 ORDER BY bucket_ts ASC
+             """,
+            (*params,),
+        )
+        rows = cur.fetchall()
+        pts = [{"t": r["bucket_ts"], "amount": r["value"]} for r in rows]
+        if limit and len(pts) > limit:
+            pts = pts[-limit:]
+        points = pts
+
+    conn.close()
+    return {"points": points}
+
 # Parsing ISO8601 très permissif (YYYY-MM-DD ou YYYY-MM-DDTHH:MM:SSZ)
 def _parse_iso_to_utc_bounds(date_from: str | None, date_to: str | None) -> Tuple[str | None, str | None]:
     def _norm(s: str) -> str:

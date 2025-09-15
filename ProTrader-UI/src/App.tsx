@@ -5,6 +5,7 @@ import Home from "./pages/Home";
 import PricePoints from "./pages/PricePoints";
 import About from "./pages/About";
 import Prices from "./pages/Prices";
+import Fortune from "./pages/Fortune";
 
 export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -12,6 +13,7 @@ export default function App() {
   const titles: Record<string, string> = {
     "/": "Accueil",
     "/prices": "Historique des prix",
+    "/fortune": "Fortune",
     "/config": "Éditeur de configuration",
     "/logs": "Gestion des prix",
     "/about": "À propos",
@@ -82,6 +84,20 @@ export default function App() {
                 <span className="truncate">Prix</span>
               </NavLink>
               <NavLink
+                to="/fortune"
+                className={({ isActive }: { isActive: boolean }) =>
+                  [
+                    "flex items-center gap-2 px-3 py-2 rounded-lg border text-sm",
+                    isActive
+                      ? "bg-sky-50 border-sky-200 text-sky-800"
+                      : "bg-white border-slate-200 hover:bg-slate-50",
+                  ].join(" ")
+                }
+              >
+                <span className="shrink-0">💰</span>
+                <span className="truncate">Fortune</span>
+              </NavLink>
+              <NavLink
                 to="/config"
                 className={({ isActive }: { isActive: boolean }) =>
                   [
@@ -132,6 +148,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/prices" element={<Prices />} />
+            <Route path="/fortune" element={<Fortune />} />
             <Route path="/config" element={<ConfigEditor />} />
             <Route path="/logs" element={<PricePoints />} />
             <Route path="/about" element={<About />} />
