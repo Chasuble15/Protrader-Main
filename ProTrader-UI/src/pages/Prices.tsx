@@ -5,6 +5,7 @@ import {
   getHdvPriceStat,
   type HdvResource,
   type TimeseriesSeries,
+  type Qty,
 } from "../api";
 import {
   Chart as ChartJS,
@@ -50,7 +51,9 @@ export default function Prices() {
     }
   });
   const [series, setSeries] = useState<TimeseriesSeries[]>([]);
-  const [qty, setQty] = useState(() => localStorage.getItem("prices.qty") ?? "x1");
+  const [qty, setQty] = useState<Qty>(
+    () => (localStorage.getItem("prices.qty") as Qty) ?? "x1",
+  );
   const [start, setStart] = useState<string>("");
   const [end, setEnd] = useState<string>("");
   const [showAvg, setShowAvg] = useState(false);
