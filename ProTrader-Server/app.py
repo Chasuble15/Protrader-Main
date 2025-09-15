@@ -829,7 +829,13 @@ def get_hdv_price_stat(
     else:
         value = statistics.median(prices)
 
-    return {"slug": slug, "qty": qty, "stat": stat, "value": value, "points": len(prices)}
+    return {
+        "slug": slug,
+        "qty": qty,
+        "stat": stat,
+        "value": value,
+        "points": len(prices),
+    }
 
 
 @app.get("/api/hdv/price_points")

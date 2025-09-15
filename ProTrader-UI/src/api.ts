@@ -254,17 +254,23 @@ export async function getHdvTimeseries(
   return (data?.series ?? []) as TimeseriesSeries[];
 }
 
+export type Qty = "x1" | "x10" | "x100" | "x1000";
+
 export type HdvPriceStat = {
   slug: string;
-  qty: string;
+  qty: Qty;
   stat: string;
   value: number | null;
   points: number;
 };
 
+/**
+ * Fetch a simple statistic (average or median) of lot prices for a resource.
+ * Prices are returned as recorded in kamas for the specified quantity.
+ */
 export async function getHdvPriceStat(
   slug: string,
-  qty: string,
+  qty: Qty,
   stat: "avg" | "median",
   start?: string,
   end?: string,

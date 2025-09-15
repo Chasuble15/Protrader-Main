@@ -7,6 +7,7 @@ import {
   getHdvPriceStat,
   type Item,
   type KamasPoint,
+  type Qty,
 } from "../api";
 
 ChartJS.register(LinearScale, PointElement, LineElement, Tooltip, Legend);
@@ -19,12 +20,12 @@ const parseTimestamp = (t: string): number => {
   return Date.parse(t.endsWith("Z") ? t : `${t}Z`);
 };
 
-const QTY_LIST = ["x1", "x10", "x100", "x1000"] as const;
+const QTY_LIST: Qty[] = ["x1", "x10", "x100", "x1000"];
 
 export default function Fortune() {
   const [points, setPoints] = useState<KamasPoint[]>([]);
   const [items, setItems] = useState<Item[]>([]);
-  const [medianMap, setMedianMap] = useState<Record<string, Record<string, number | null>>>({});
+  const [medianMap, setMedianMap] = useState<Record<string, Record<Qty, number | null>>>({});
 
   useEffect(() => {
     (async () => {
@@ -56,9 +57,9 @@ export default function Fortune() {
     (async () => {
       const start = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
       const end = new Date().toISOString();
-      const map: Record<string, Record<string, number | null>> = {};
+      const map: Record<string, Record<Qty, number | null>> = {};
       for (const it of items) {
-        const qmap: Record<string, number | null> = {};
+        const qmap: Record<Qty, number | null> = {} as Record<Qty, number | null>;
         await Promise.all(
           QTY_LIST.map(async (qty) => {
             try {
@@ -81,6 +82,8 @@ export default function Fortune() {
     const mime = maybePng ? "image/png" : "image/jpeg";
     return `data:${mime};base64,${it.img_blob}`;
   };
+
+  const formatKamas = (v: number) => `${Math.round(v / 1000).toLocaleString("fr-FR")} K`;
 
   const data = {
     datasets: [
@@ -133,7 +136,7 @@ export default function Fortune() {
               <tr className="border-b text-left">
                 <th className="p-2">Ressource</th>
                 <th className="p-2">Quantité</th>
-                <th className="p-2">Prix médian (K)</th>
+                <th className="p-2">Prix médian du lot (K)</th>
               </tr>
             </thead>
             <tbody>
@@ -159,7 +162,7 @@ export default function Fortune() {
                     <td className="p-2">
                       {(() => {
                         const v = medianMap[it.slug_fr]?.[qty];
-                        return v != null ? `${Math.round(v / 1000)} K` : "—";
+                        return v != null ? formatKamas(v) : "—";
                       })()}
                     </td>
                   </tr>
