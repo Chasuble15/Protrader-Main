@@ -188,6 +188,23 @@ export async function saveAutoMode(auto: boolean): Promise<{ ok: boolean }> {
   return data as { ok: boolean };
 }
 
+// KAMAS -------------------------------------------------------------------
+
+export type KamasPoint = { t: string; amount: number };
+
+export async function getKamasHistory(
+  bucket = "day",
+  start?: string,
+  end?: string,
+): Promise<KamasPoint[]> {
+  const url = new URL("/api/kamas_history", API_BASE);
+  if (bucket) url.searchParams.set("bucket", bucket);
+  if (start) url.searchParams.set("start", new Date(start).toISOString());
+  if (end) url.searchParams.set("end", new Date(end).toISOString());
+  const data = await fetchJSON(url.toString());
+  return (data?.points ?? []) as KamasPoint[];
+}
+
 // PRICES -------------------------------------------------------------------
 
 export type HdvResource = {
