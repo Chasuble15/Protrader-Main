@@ -2,7 +2,7 @@
 # pip install fastapi "uvicorn[standard]" websockets
 import asyncio, json, time, statistics
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -309,6 +309,49 @@ def get_active_fortune_lines() -> List[Dict[str, Any]]:
                             "margin_value": cfg.get("margin_value"),
                         }
                     )
+        if not lines:
+            return lines
+
+        # Append the 7-day median price for each (slug, qty) pair.
+        ensure_price_schema(conn)
+        slug_list = sorted({(line.get("slug") or "").strip() for line in lines if line.get("slug")})
+        qty_list = sorted({(line.get("qty") or "").strip() for line in lines if line.get("qty")})
+
+        median_map: Dict[Tuple[str, str], float] = {}
+        if slug_list and qty_list:
+            now = datetime.utcnow()
+            since = (now - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            until = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+            slug_marks = ",".join(["?"] * len(slug_list))
+            qty_marks = ",".join(["?"] * len(qty_list))
+            cur.execute(
+                f"""
+                    SELECT slug, qty, price
+                    FROM hdv_prices
+                    WHERE slug IN ({slug_marks})
+                      AND qty IN ({qty_marks})
+                      AND datetime >= ?
+                      AND datetime <= ?
+                """,
+                (*slug_list, *qty_list, since, until),
+            )
+            price_rows = cur.fetchall()
+            prices_by_pair: Dict[Tuple[str, str], List[int]] = {}
+            for row in price_rows:
+                key = (row["slug"], row["qty"])
+                prices_by_pair.setdefault(key, []).append(row["price"])
+            for key, prices in prices_by_pair.items():
+                if prices:
+                    median_map[key] = statistics.median(prices)
+
+        for line in lines:
+            slug_key = (line.get("slug") or "").strip()
+            qty_key = (line.get("qty") or "").strip()
+            if slug_key and qty_key:
+                line["median_price_7d"] = median_map.get((slug_key, qty_key))
+            else:
+                line["median_price_7d"] = None
+
         return lines
     except Exception as e:  # pragma: no cover - best effort
         print("[backend] get_active_fortune_lines failed:", e)
