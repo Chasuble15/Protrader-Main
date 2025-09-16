@@ -79,7 +79,7 @@ def start_script(args: Dict[str, Any], cmd_id: str) -> Dict[str, Any]:
 
     # Lance le FSM avec la liste complète des ressources
     logger.info("Launching script thread with %d resource(s)", len(resources))
-    threading.Thread(target=run, args=(resources,), daemon=True).start()
+    threading.Thread(target=run, args=(resources, fortune_lines), daemon=True).start()
 
     return {
         "type": "script_result",
