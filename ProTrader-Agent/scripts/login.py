@@ -30,6 +30,15 @@ QTE_X1000_PATH = Path(config["base_dir"]) / config["templates"]["qte_x1000"]
 RECHERCHE_PATH = Path(config["base_dir"]) / config["templates"]["recherche"]
 KAMAS_PATH = Path(config["base_dir"]) / config["templates"]["kamas"]
 
+_CONFIRMER_TEMPLATE = config.get("templates", {}).get("confirmer_achat")
+if _CONFIRMER_TEMPLATE:
+    CONFIRMER_ACHAT_PATH = Path(config["base_dir"]) / _CONFIRMER_TEMPLATE
+    if not CONFIRMER_ACHAT_PATH.exists():
+        logger.warning("Template confirmer_achat introuvable: %s", CONFIRMER_ACHAT_PATH)
+        CONFIRMER_ACHAT_PATH = None
+else:
+    CONFIRMER_ACHAT_PATH = None
+
 def _send_state(name: str) -> None:
     """Envoie l'état courant au serveur si le client est disponible."""
     if bus.client:
@@ -68,6 +77,24 @@ def _send_kamas(amount: int) -> None:
         bus.client.send(frame)
     else:
         print("[WARN] bus.client indisponible, payload:", frame)
+
+
+def _build_fortune_lookup(fortune_lines):
+    lookup = {}
+    for line in fortune_lines or []:
+        slug = (line.get("slug") or "").strip().lower()
+        qty = (line.get("qty") or "").strip()
+        if slug and qty:
+            lookup.setdefault(slug, {})[qty] = line
+    return lookup
+
+
+def _get_fortune_line(fsm, slug: str, qty: str):
+    slug_key = (slug or "").strip().lower()
+    if not slug_key:
+        return None
+    lookup = getattr(getattr(fsm, "ctx", None), "fortune_lookup", {}) or {}
+    return lookup.get(slug_key, {}).get(qty)
 
 
 def on_enter_lancement(fsm):
@@ -145,6 +172,8 @@ def on_enter_entrer_ressource(fsm):
     current = fsm.ctx.resources[fsm.ctx.resource_index]
     fsm.ctx.slug = current.get("slug", "")
     fsm.ctx.template_path = current.get("template_path", "")
+    fsm.ctx.reset_scan = True
+    fsm.ctx.pending_purchase = None
     type_text(fsm.ctx.slug or " ")
     return "SELECTION_RESSOURCE"
 
@@ -175,20 +204,30 @@ def on_tick_selection_ressource(fsm):
 # Nombre max de tentatives par quantité (à 2 Hz => 10 s)
 SCAN_MAX_ATTEMPTS_PER_QTY = 5
 
+CLIC_ACHAT_OFFSET_PX = 100
+
 def on_enter_scan_prix(fsm):
     _send_state("SCAN_PRIX")
 
-    # Cibles à scanner (ordre libre)
-    fsm.ctx.targets = [
-        ("x1",   str(QTE_X1_PATH)),
-        ("x10",  str(QTE_X10_PATH)),
-        ("x100", str(QTE_X100_PATH)),
-        ("x1000",str(QTE_X1000_PATH)),
-    ]
-    # None = pas encore scanné ; int = prix ; -1 = ignoré (introuvable)
-    fsm.ctx.scanned = {k: None for k, _ in fsm.ctx.targets}
-    # Compteur de tentatives par quantité
-    fsm.ctx.attempts = {k: 0 for k, _ in fsm.ctx.targets}
+    reset_scan = getattr(fsm.ctx, "reset_scan", True)
+
+    if reset_scan or not getattr(fsm.ctx, "targets", None):
+        # Cibles à scanner (ordre libre)
+        fsm.ctx.targets = [
+            ("x1",   str(QTE_X1_PATH)),
+            ("x10",  str(QTE_X10_PATH)),
+            ("x100", str(QTE_X100_PATH)),
+            ("x1000",str(QTE_X1000_PATH)),
+        ]
+    if reset_scan or not getattr(fsm.ctx, "scanned", None):
+        # None = pas encore scanné ; int = prix ; -1 = ignoré (introuvable)
+        fsm.ctx.scanned = {k: None for k, _ in fsm.ctx.targets}
+    if reset_scan or not getattr(fsm.ctx, "attempts", None):
+        # Compteur de tentatives par quantité
+        fsm.ctx.attempts = {k: 0 for k, _ in fsm.ctx.targets}
+
+    fsm.ctx.reset_scan = False
+    fsm.ctx.pending_purchase = None
 
 
 
@@ -217,11 +256,29 @@ def on_tick_scan_prix(fsm):
 
         # Si trouvé, lire le prix via OCR
         ocrzone = (res.left + 150, res.top, 245, res.height)
+        ocrzone = tuple(int(v) for v in ocrzone)
         val = ocr_read_int(ocrzone, debug=True)
 
         if val is not None:
-            _send_price(slug=slug, qty=qty, price=int(val))
-            fsm.ctx.scanned[qty] = int(val)  # marquer comme scanné OK
+            price_val = int(val)
+            _send_price(slug=slug, qty=qty, price=price_val)
+            fortune_line = _get_fortune_line(fsm, slug, qty)
+            if fortune_line:
+                fsm.ctx.pending_purchase = {
+                    "slug": slug,
+                    "qty": qty,
+                    "price": price_val,
+                    "ocrzone": ocrzone,
+                    "fortune_line": fortune_line,
+                    "click_done": False,
+                }
+                logger.info(
+                    "Fortune active pour %s (%s), déclenchement de l'achat",
+                    slug,
+                    qty,
+                )
+                return "CLIC_ACHAT"
+            fsm.ctx.scanned[qty] = price_val  # marquer comme scanné OK
         else:
             # OCR non concluant : on retentera à un prochain tick
             fsm.ctx.attempts[qty] += 1
@@ -234,6 +291,50 @@ def on_tick_scan_prix(fsm):
     # Si toutes les quantités sont traitées (prix lu ou ignorée), on termine
     if all(v is not None for v in fsm.ctx.scanned.values()):
         return "CLIC_RECHERCHE"
+
+
+def on_enter_clic_achat(fsm):
+    _send_state("CLIC_ACHAT")
+
+
+def on_tick_clic_achat(fsm):
+    pending = getattr(fsm.ctx, "pending_purchase", None)
+    if not pending:
+        logger.warning("CLIC_ACHAT sans achat en attente, retour au scan")
+        return "SCAN_PRIX"
+
+    if not pending.get("click_done"):
+        left, top, width, height = pending.get("ocrzone", (0, 0, 0, 0))
+        click_x = int(left + width + CLIC_ACHAT_OFFSET_PX)
+        click_y = int(top + height / 2)
+        logger.debug("CLIC_ACHAT: clic sur Acheter en (%d, %d)", click_x, click_y)
+        move_click(click_x, click_y)
+        pending["click_done"] = True
+        time.sleep(1)
+        return
+
+    if not CONFIRMER_ACHAT_PATH:
+        logger.warning("Template confirmer_achat indisponible, validation ignorée")
+        fsm.ctx.scanned[pending["qty"]] = pending["price"]
+        fsm.ctx.pending_purchase = None
+        return "SCAN_PRIX"
+
+    res = find_template_on_screen(
+        template_path=str(CONFIRMER_ACHAT_PATH),
+        debug=True,
+    )
+
+    if res:
+        logger.debug(
+            "CLIC_ACHAT: confirmation trouvée, clic en (%d, %d)",
+            res.center[0],
+            res.center[1],
+        )
+        move_click(res.center[0], res.center[1])
+        time.sleep(1)
+        fsm.ctx.scanned[pending["qty"]] = pending["price"]
+        fsm.ctx.pending_purchase = None
+        return "SCAN_PRIX"
 
 def on_enter_clic_recherche(fsm):
     _send_state("CLIC_RECHERCHE")
@@ -298,15 +399,26 @@ states = {
     "ENTRER_RESSOURCE": StateDef("ENTRER_RESSOURCE", on_enter=on_enter_entrer_ressource),
     "SELECTION_RESSOURCE": StateDef("SELECTION_RESSOURCE", on_enter=on_enter_selection_ressource, on_tick=on_tick_selection_ressource),
     "SCAN_PRIX": StateDef("SCAN_PRIX", on_enter=on_enter_scan_prix, on_tick=on_tick_scan_prix),
+    "CLIC_ACHAT": StateDef("CLIC_ACHAT", on_enter=on_enter_clic_achat, on_tick=on_tick_clic_achat),
     "CLIC_RECHERCHE": StateDef("CLIC_RECHERCHE", on_enter=on_enter_clic_recherche, on_tick=on_tick_clic_recherche),
     "END": StateDef("END", on_enter=on_enter_end),
 }
 
 
-def run(resources):
+def run(resources, fortune_lines=None):
+    fortune_lines = fortune_lines or []
     fsm = FSM(states=states, start="LANCEMENT", end="END")
     # expose la liste des ressources et l'indice courant
-    fsm.ctx = types.SimpleNamespace(resources=resources, resource_index=0, slug="", template_path="")
+    fsm.ctx = types.SimpleNamespace(
+        resources=resources,
+        resource_index=0,
+        slug="",
+        template_path="",
+        fortune_lines=fortune_lines,
+        fortune_lookup=_build_fortune_lookup(fortune_lines),
+        pending_purchase=None,
+        reset_scan=True,
+    )
 
     try:
         fsm.run(tick_hz=2)
