@@ -2,13 +2,16 @@ import os
 import types
 from pathlib import Path
 import time
+from typing import Optional, Tuple
+
+import mss
 
 from settings import CONFIG_PATH
 from utils.config_io import load_config_yaml, parse_yaml_to_dict
 from utils.fsm import FSM, StateDef
 from utils.misc import open_dofus, close_dofus
 from utils.mouse import move_click
-from utils.keyboard import type_text
+from utils.keyboard import type_text, press_key, hotkey
 from utils.vision import find_template_on_screen, find_template_on_screen_alpha
 from utils.ocr import ocr_read_int
 
@@ -29,6 +32,59 @@ QTE_X100_PATH = Path(config["base_dir"]) / config["templates"]["qte_x100"]
 QTE_X1000_PATH = Path(config["base_dir"]) / config["templates"]["qte_x1000"]
 RECHERCHE_PATH = Path(config["base_dir"]) / config["templates"]["recherche"]
 KAMAS_PATH = Path(config["base_dir"]) / config["templates"]["kamas"]
+ONGLET_ACHAT_PATH = Path(config["base_dir"]) / config["templates"]["onglet_achat"]
+ONGLET_VENTE_PATH = Path(config["base_dir"]) / config["templates"]["onglet_vente"]
+
+SEL_VENTE_PATHS = {
+    "x1": Path(config["base_dir"]) / config["templates"]["sel_vente_x1"],
+    "x10": Path(config["base_dir"]) / config["templates"]["sel_vente_x10"],
+    "x100": Path(config["base_dir"]) / config["templates"]["sel_vente_x100"],
+    "x1000": Path(config["base_dir"]) / config["templates"]["sel_vente_x1000"],
+}
+
+VENTE_PATHS = {
+    "x1": Path(config["base_dir"]) / config["templates"]["vente_x1"],
+    "x10": Path(config["base_dir"]) / config["templates"]["vente_x10"],
+    "x100": Path(config["base_dir"]) / config["templates"]["vente_x100"],
+    "x1000": Path(config["base_dir"]) / config["templates"]["vente_x1000"],
+}
+
+SALE_QTY_ORDER = ["x1", "x10", "x100", "x1000"]
+
+
+def _compute_right_half_region() -> Optional[Tuple[int, int, int, int]]:
+    """Retourne la région correspondant à la moitié droite de l'écran actif."""
+    monitor_index = int(config.get("settings", {}).get("monitor_index", 1) or 1)
+    try:
+        with mss.mss() as sct:
+            monitors = sct.monitors
+            if monitor_index < 1 or monitor_index >= len(monitors):
+                monitor_index = 1
+            mon = monitors[monitor_index]
+            width = int(mon.get("width", 0))
+            height = int(mon.get("height", 0))
+    except Exception as exc:  # pragma: no cover - best effort logging only
+        logger.debug("Impossible de déterminer la moitié droite de l'écran: %s", exc)
+        return None
+
+    if width <= 0 or height <= 0:
+        return None
+
+    half_width = width // 2
+    return (half_width, 0, width - half_width, height)
+
+
+def _qty_to_int_string(qty: str) -> str:
+    """Convertit une chaîne de type 'x100' en valeur numérique ('100')."""
+    if not qty:
+        return ""
+    cleaned = qty.strip().lower()
+    if cleaned.startswith("x"):
+        cleaned = cleaned[1:]
+    try:
+        return str(int(float(cleaned)))
+    except (TypeError, ValueError):
+        return ""
 
 _CONFIRMER_TEMPLATE = config.get("templates", {}).get("confirmer_achat")
 if _CONFIRMER_TEMPLATE:
@@ -174,6 +230,9 @@ def on_enter_entrer_ressource(fsm):
     fsm.ctx.template_path = current.get("template_path", "")
     fsm.ctx.reset_scan = True
     fsm.ctx.pending_purchase = None
+    fsm.ctx.completed_purchases = []
+    fsm.ctx.current_sale = None
+    fsm.ctx.skip_recherche_click = False
     type_text(fsm.ctx.slug or " ")
     return "SELECTION_RESSOURCE"
 
@@ -290,6 +349,13 @@ def on_tick_scan_prix(fsm):
 
     # Si toutes les quantités sont traitées (prix lu ou ignorée), on termine
     if all(v is not None for v in fsm.ctx.scanned.values()):
+        if getattr(fsm.ctx, "current_sale", None) is None and getattr(
+            fsm.ctx, "completed_purchases", []
+        ):
+            fsm.ctx.current_sale = fsm.ctx.completed_purchases.pop(0)
+            return "VENTE_ONGLET"
+        if getattr(fsm.ctx, "current_sale", None) is not None:
+            return "VENTE_ONGLET"
         return "CLIC_RECHERCHE"
 
 
@@ -332,14 +398,243 @@ def on_tick_clic_achat(fsm):
         )
         move_click(res.center[0], res.center[1])
         time.sleep(1)
+        sale_queue = getattr(fsm.ctx, "completed_purchases", None)
+        if isinstance(sale_queue, list):
+            sale_queue.append(
+                {
+                    "slug": pending.get("slug"),
+                    "qty": pending.get("qty"),
+                    "price": pending.get("price"),
+                    "fortune_line": pending.get("fortune_line", {}),
+                    "template_path": getattr(fsm.ctx, "template_path", ""),
+                }
+            )
         fsm.ctx.scanned[pending["qty"]] = pending["price"]
         fsm.ctx.pending_purchase = None
         return "SCAN_PRIX"
+
+
+def on_enter_vente_onglet(fsm):
+    _send_state("VENTE_ONGLET")
+
+
+def on_tick_vente_onglet(fsm):
+    sale = getattr(fsm.ctx, "current_sale", None)
+    if not sale:
+        logger.warning("VENTE_ONGLET sans vente en cours, retour à la recherche")
+        return "CLIC_RECHERCHE"
+
+    res = find_template_on_screen(
+        template_path=str(ONGLET_VENTE_PATH),
+        debug=True,
+    )
+
+    if res:
+        time.sleep(1)
+        move_click(res.center[0], res.center[1])
+        time.sleep(1)
+        return "VENTE_SELECTION_RESSOURCE"
+
+
+def on_enter_vente_selection_ressource(fsm):
+    _send_state("VENTE_SELECTION_RESSOURCE")
+
+
+def on_tick_vente_selection_ressource(fsm):
+    sale = getattr(fsm.ctx, "current_sale", None)
+    if not sale:
+        logger.warning(
+            "VENTE_SELECTION_RESSOURCE sans vente en cours, retour à la recherche"
+        )
+        return "CLIC_RECHERCHE"
+
+    template_path = sale.get("template_path") or getattr(fsm.ctx, "template_path", "")
+    if not template_path:
+        logger.warning("Template ressource manquant pour la vente, on annule")
+        fsm.ctx.current_sale = None
+        return "CLIC_RECHERCHE"
+
+    region = getattr(fsm.ctx, "right_half_region", None)
+    res = find_template_on_screen_alpha(
+        template_path=template_path,
+        scales=(0.58, 1.3, 1.1),
+        threshold=0.67,
+        use_color=True,
+        region=region,
+        debug=True,
+    )
+
+    if res:
+        time.sleep(1)
+        move_click(res.center[0], res.center[1])
+        time.sleep(0.5)
+        return "VENTE_SELECTION_QTE"
+
+
+def on_enter_vente_selection_qte(fsm):
+    _send_state("VENTE_SELECTION_QTE")
+    sale = getattr(fsm.ctx, "current_sale", None)
+    if isinstance(sale, dict):
+        sale["sel_attempts"] = 0
+        sale["sel_use_alternatives"] = False
+        sale.pop("selected_sel_qty", None)
+
+
+def on_tick_vente_selection_qte(fsm):
+    sale = getattr(fsm.ctx, "current_sale", None)
+    if not sale:
+        logger.warning("VENTE_SELECTION_QTE sans vente en cours, retour à la recherche")
+        return "CLIC_RECHERCHE"
+
+    use_alternatives = sale.get("sel_use_alternatives", False)
+    qty = sale.get("qty")
+
+    candidate_qtys = []
+    if not use_alternatives and qty in SEL_VENTE_PATHS:
+        candidate_qtys = [qty]
+    else:
+        sale["sel_use_alternatives"] = True
+        candidate_qtys = [q for q in SALE_QTY_ORDER if q in SEL_VENTE_PATHS]
+
+    for candidate in candidate_qtys:
+        path = SEL_VENTE_PATHS.get(candidate)
+        if not path:
+            continue
+        res = find_template_on_screen(template_path=str(path), debug=True)
+        if res:
+            move_click(res.center[0], res.center[1])
+            sale["selected_sel_qty"] = candidate
+            time.sleep(0.5)
+            return "VENTE_CLIQUER_VENTE"
+
+    if not use_alternatives:
+        sale["sel_attempts"] = sale.get("sel_attempts", 0) + 1
+        if sale["sel_attempts"] >= 3:
+            sale["sel_use_alternatives"] = True
+
+
+def on_enter_vente_cliquer_vente(fsm):
+    _send_state("VENTE_CLIQUER_VENTE")
+
+
+def on_tick_vente_cliquer_vente(fsm):
+    sale = getattr(fsm.ctx, "current_sale", None)
+    if not sale:
+        logger.warning("VENTE_CLIQUER_VENTE sans vente en cours, retour à la recherche")
+        return "CLIC_RECHERCHE"
+
+    preferred = sale.get("selected_sel_qty") or sale.get("qty")
+    candidate_qtys = []
+    if preferred in VENTE_PATHS:
+        candidate_qtys.append(preferred)
+    candidate_qtys.extend(
+        [q for q in SALE_QTY_ORDER if q in VENTE_PATHS and q not in candidate_qtys]
+    )
+
+    for candidate in candidate_qtys:
+        path = VENTE_PATHS.get(candidate)
+        if not path:
+            continue
+        res = find_template_on_screen(template_path=str(path), debug=True)
+        if res:
+            move_click(res.center[0], res.center[1])
+            sale["selected_sale_qty"] = candidate
+            time.sleep(0.5)
+            return "VENTE_SAISIE"
+
+
+def on_enter_vente_saisie(fsm):
+    _send_state("VENTE_SAISIE")
+    sale = getattr(fsm.ctx, "current_sale", None)
+    if isinstance(sale, dict):
+        sale["saisie_done"] = False
+
+
+def on_tick_vente_saisie(fsm):
+    sale = getattr(fsm.ctx, "current_sale", None)
+    if not sale:
+        logger.warning("VENTE_SAISIE sans vente en cours, retour à la recherche")
+        return "CLIC_RECHERCHE"
+
+    if sale.get("saisie_done"):
+        return "VENTE_RETOUR_ACHAT"
+
+    time.sleep(1)
+
+    price_value = None
+    fortune_line = sale.get("fortune_line") or {}
+    median_value = fortune_line.get("median_price_7d")
+    if median_value is not None:
+        try:
+            price_value = int(round(float(median_value)))
+        except (TypeError, ValueError):
+            price_value = None
+
+    if price_value is None:
+        fallback_price = sale.get("price")
+        if fallback_price is not None:
+            try:
+                price_value = int(round(float(fallback_price)))
+            except (TypeError, ValueError):
+                price_value = None
+
+    if price_value is None:
+        logger.warning("Impossible de déterminer le prix de vente, valeur 0 utilisée")
+        price_value = 0
+
+    price_text = str(max(0, price_value))
+    qty_text = _qty_to_int_string(sale.get("qty")) or "1"
+
+    # Renseigne d'abord le prix médian, puis la quantité reçue
+    hotkey(["ctrl", "a"])
+    type_text(price_text)
+    press_key("tab")
+    hotkey(["ctrl", "a"])
+    type_text(qty_text)
+    press_key("enter")
+
+    sale["saisie_done"] = True
+    return "VENTE_RETOUR_ACHAT"
+
+
+def on_enter_vente_retour_achat(fsm):
+    _send_state("VENTE_RETOUR_ACHAT")
+
+
+def on_tick_vente_retour_achat(fsm):
+    sale = getattr(fsm.ctx, "current_sale", None)
+    if not sale and not getattr(fsm.ctx, "completed_purchases", []):
+        return "CLIC_RECHERCHE"
+
+    res = find_template_on_screen(
+        template_path=str(ONGLET_ACHAT_PATH),
+        debug=True,
+    )
+
+    if res:
+        time.sleep(1)
+        move_click(res.center[0], res.center[1])
+        time.sleep(1)
+        fsm.ctx.current_sale = None
+        if getattr(fsm.ctx, "completed_purchases", []):
+            fsm.ctx.current_sale = fsm.ctx.completed_purchases.pop(0)
+            return "VENTE_ONGLET"
+        fsm.ctx.skip_recherche_click = True
+        return "CLIC_RECHERCHE"
+
 
 def on_enter_clic_recherche(fsm):
     _send_state("CLIC_RECHERCHE")
 
 def on_tick_clic_recherche(fsm):
+    if getattr(fsm.ctx, "skip_recherche_click", False):
+        fsm.ctx.skip_recherche_click = False
+        time.sleep(0.5)
+        fsm.ctx.resource_index += 1
+        if fsm.ctx.resource_index < len(fsm.ctx.resources):
+            return "ENTRER_RESSOURCE"
+        return "END"
+
     res = find_template_on_screen(
         template_path=str(RECHERCHE_PATH),
         debug=True,
@@ -400,6 +695,28 @@ states = {
     "SELECTION_RESSOURCE": StateDef("SELECTION_RESSOURCE", on_enter=on_enter_selection_ressource, on_tick=on_tick_selection_ressource),
     "SCAN_PRIX": StateDef("SCAN_PRIX", on_enter=on_enter_scan_prix, on_tick=on_tick_scan_prix),
     "CLIC_ACHAT": StateDef("CLIC_ACHAT", on_enter=on_enter_clic_achat, on_tick=on_tick_clic_achat),
+    "VENTE_ONGLET": StateDef("VENTE_ONGLET", on_enter=on_enter_vente_onglet, on_tick=on_tick_vente_onglet),
+    "VENTE_SELECTION_RESSOURCE": StateDef(
+        "VENTE_SELECTION_RESSOURCE",
+        on_enter=on_enter_vente_selection_ressource,
+        on_tick=on_tick_vente_selection_ressource,
+    ),
+    "VENTE_SELECTION_QTE": StateDef(
+        "VENTE_SELECTION_QTE",
+        on_enter=on_enter_vente_selection_qte,
+        on_tick=on_tick_vente_selection_qte,
+    ),
+    "VENTE_CLIQUER_VENTE": StateDef(
+        "VENTE_CLIQUER_VENTE",
+        on_enter=on_enter_vente_cliquer_vente,
+        on_tick=on_tick_vente_cliquer_vente,
+    ),
+    "VENTE_SAISIE": StateDef("VENTE_SAISIE", on_enter=on_enter_vente_saisie, on_tick=on_tick_vente_saisie),
+    "VENTE_RETOUR_ACHAT": StateDef(
+        "VENTE_RETOUR_ACHAT",
+        on_enter=on_enter_vente_retour_achat,
+        on_tick=on_tick_vente_retour_achat,
+    ),
     "CLIC_RECHERCHE": StateDef("CLIC_RECHERCHE", on_enter=on_enter_clic_recherche, on_tick=on_tick_clic_recherche),
     "END": StateDef("END", on_enter=on_enter_end),
 }
@@ -418,6 +735,10 @@ def run(resources, fortune_lines=None):
         fortune_lookup=_build_fortune_lookup(fortune_lines),
         pending_purchase=None,
         reset_scan=True,
+        completed_purchases=[],
+        current_sale=None,
+        right_half_region=_compute_right_half_region(),
+        skip_recherche_click=False,
     )
 
     try:
