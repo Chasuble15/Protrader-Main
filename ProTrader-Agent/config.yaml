@@ -17,6 +17,16 @@ templates:
   recherche: recherche.png
   confirmer_achat: confirmer_achat.png
   kamas: kamas.png
+  onglet_achat: onglet_achat.png
+  onglet_vente: onglet_vente.png
+  sel_vente_x1: sel_vente_x1.png
+  sel_vente_x10: sel_vente_x10.png
+  sel_vente_x100: sel_vente_x100.png
+  sel_vente_x1000: sel_vente_x1000.png
+  vente_x1: vente_x1.png
+  vente_x10: vente_x10.png
+  vente_x100: vente_x100.png
+  vente_x1000: vente_x1000.png
 settings:
   monitor_index: 1
   default_threshold: 0.88
