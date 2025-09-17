@@ -74,17 +74,12 @@ def _compute_right_half_region() -> Optional[Tuple[int, int, int, int]]:
     return (half_width, 0, width - half_width, height)
 
 
-def _qty_to_int_string(qty: str) -> str:
-    """Convertit une chaîne de type 'x100' en valeur numérique ('100')."""
-    if not qty:
-        return ""
-    cleaned = qty.strip().lower()
-    if cleaned.startswith("x"):
-        cleaned = cleaned[1:]
-    try:
-        return str(int(float(cleaned)))
-    except (TypeError, ValueError):
-        return ""
+def _fill_price(price_text: str) -> None:
+    """Renseigne le champ de prix puis valide avec Entrée."""
+    hotkey(["ctrl", "a"])
+    type_text(price_text)
+    time.sleep(0.15)
+    press_key("enter")
 
 _CONFIRMER_TEMPLATE = config.get("templates", {}).get("confirmer_achat")
 if _CONFIRMER_TEMPLATE:
@@ -670,15 +665,9 @@ def on_tick_vente_saisie(fsm):
         price_value = 0
 
     price_text = str(max(0, price_value))
-    qty_text = _qty_to_int_string(sale.get("qty")) or "1"
 
-    # Renseigne d'abord le prix médian, puis la quantité reçue
-    hotkey(["ctrl", "a"])
-    type_text(price_text)
-    press_key("tab")
-    hotkey(["ctrl", "a"])
-    type_text(qty_text)
-    press_key("enter")
+    # Renseigne le prix puis valide la saisie
+    _fill_price(price_text)
 
     sale["saisie_done"] = True
     return "VENTE_RETOUR_ACHAT"
