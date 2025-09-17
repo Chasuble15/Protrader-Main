@@ -264,6 +264,9 @@ def on_tick_selection_ressource(fsm):
 SCAN_MAX_ATTEMPTS_PER_QTY = 5
 
 CLIC_ACHAT_OFFSET_PX = 100
+VENTE_CLICK_MAX_ATTEMPTS = 6
+VENTE_FALLBACK_REGION_RATIO = 0.28
+VENTE_FALLBACK_OFFSET_PX = 240
 
 def on_enter_scan_prix(fsm):
     _send_state("SCAN_PRIX")
@@ -478,6 +481,9 @@ def on_enter_vente_selection_qte(fsm):
         sale["sel_attempts"] = 0
         sale["sel_use_alternatives"] = False
         sale.pop("selected_sel_qty", None)
+        sale.pop("selected_sel_bbox", None)
+        sale.pop("vente_fallback_click", None)
+        sale.pop("saisie_force_tab", None)
 
 
 def on_tick_vente_selection_qte(fsm):
@@ -503,6 +509,12 @@ def on_tick_vente_selection_qte(fsm):
         res = find_template_on_screen(template_path=str(path), debug=True)
         if res:
             sale["selected_sel_qty"] = candidate
+            sale["selected_sel_bbox"] = (
+                int(res.left),
+                int(res.top),
+                int(res.width),
+                int(res.height),
+            )
             if candidate == qty:
                 time.sleep(1)
             else:
@@ -518,6 +530,11 @@ def on_tick_vente_selection_qte(fsm):
 
 def on_enter_vente_cliquer_vente(fsm):
     _send_state("VENTE_CLIQUER_VENTE")
+    sale = getattr(fsm.ctx, "current_sale", None)
+    if isinstance(sale, dict):
+        sale["vente_attempts"] = 0
+        sale.pop("vente_fallback_click", None)
+        sale.pop("saisie_force_tab", None)
 
 
 def on_tick_vente_cliquer_vente(fsm):
@@ -534,16 +551,69 @@ def on_tick_vente_cliquer_vente(fsm):
         [q for q in SALE_QTY_ORDER if q in VENTE_PATHS and q not in candidate_qtys]
     )
 
+    region = getattr(fsm.ctx, "right_half_region", None)
+
     for candidate in candidate_qtys:
         path = VENTE_PATHS.get(candidate)
         if not path:
             continue
-        res = find_template_on_screen(template_path=str(path), debug=True)
+        res = find_template_on_screen(
+            template_path=str(path),
+            debug=True,
+            region=region,
+        )
         if res:
             move_click(res.center[0], res.center[1])
             sale["selected_sale_qty"] = candidate
+            sale["vente_attempts"] = 0
+            sale.pop("vente_fallback_click", None)
+            sale.pop("saisie_force_tab", None)
             time.sleep(0.5)
             return "VENTE_SAISIE"
+
+    sale["vente_attempts"] = sale.get("vente_attempts", 0) + 1
+
+    if sale["vente_attempts"] >= VENTE_CLICK_MAX_ATTEMPTS:
+        sale["vente_attempts"] = 0
+        sale["selected_sale_qty"] = sale.get("selected_sel_qty") or sale.get("qty")
+        bbox = sale.get("selected_sel_bbox")
+        fallback_click = None
+        if bbox:
+            left, top, width, height = bbox
+            fallback_y = int(top + height / 2)
+            if region:
+                ratio = max(0.05, min(0.95, VENTE_FALLBACK_REGION_RATIO))
+                rel_x = int(region[2] * ratio)
+                rel_x = max(5, min(rel_x, max(region[2] - 5, 5)))
+                fallback_x = int(region[0] + rel_x)
+            else:
+                fallback_x = int(left + width + VENTE_FALLBACK_OFFSET_PX)
+            fallback_click = (fallback_x, fallback_y)
+        elif region:
+            ratio = max(0.05, min(0.95, VENTE_FALLBACK_REGION_RATIO))
+            rel_x = int(region[2] * ratio)
+            rel_x = max(5, min(rel_x, max(region[2] - 5, 5)))
+            fallback_x = int(region[0] + rel_x)
+            fallback_y = int(region[1] + region[3] // 2)
+            fallback_click = (fallback_x, fallback_y)
+
+        if fallback_click:
+            sale["vente_fallback_click"] = fallback_click
+            logger.debug(
+                "VENTE_CLIQUER_VENTE: fallback sur clic (%d, %d)",
+                fallback_click[0],
+                fallback_click[1],
+            )
+        else:
+            sale["saisie_force_tab"] = True
+            logger.debug(
+                "VENTE_CLIQUER_VENTE: aucun fallback de clic, tab forcé pour la saisie",
+            )
+
+        logger.warning(
+            "VENTE_CLIQUER_VENTE: template vente introuvable, passage en saisie directe"
+        )
+        return "VENTE_SAISIE"
 
 
 def on_enter_vente_saisie(fsm):
@@ -561,6 +631,15 @@ def on_tick_vente_saisie(fsm):
 
     if sale.get("saisie_done"):
         return "VENTE_RETOUR_ACHAT"
+
+    fallback_click = sale.pop("vente_fallback_click", None)
+    if fallback_click:
+        move_click(int(fallback_click[0]), int(fallback_click[1]))
+        time.sleep(0.4)
+
+    if sale.pop("saisie_force_tab", False):
+        press_key("tab")
+        time.sleep(0.2)
 
     time.sleep(1)
 
