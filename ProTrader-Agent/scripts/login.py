@@ -502,9 +502,12 @@ def on_tick_vente_selection_qte(fsm):
             continue
         res = find_template_on_screen(template_path=str(path), debug=True)
         if res:
-            move_click(res.center[0], res.center[1])
             sale["selected_sel_qty"] = candidate
-            time.sleep(0.5)
+            if candidate == qty:
+                time.sleep(1)
+            else:
+                move_click(res.center[0], res.center[1])
+                time.sleep(0.5)
             return "VENTE_CLIQUER_VENTE"
 
     if not use_alternatives:
