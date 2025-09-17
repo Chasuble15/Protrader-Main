@@ -86,6 +86,26 @@ def _qty_to_int_string(qty: str) -> str:
     except (TypeError, ValueError):
         return ""
 
+
+def _fill_price_and_quantity(price_text: str, qty_text: str) -> None:
+    """Renseigne les champs de prix et de quantité puis valide avec Entrée."""
+    # Champ prix
+    hotkey(["ctrl", "a"])
+    type_text(price_text)
+    time.sleep(0.1)
+
+    # Passage au champ quantité
+    press_key("tab")
+    time.sleep(0.1)
+
+    # Champ quantité
+    hotkey(["ctrl", "a"])
+    type_text(qty_text)
+
+    # Validation finale
+    time.sleep(0.15)
+    press_key("enter")
+
 _CONFIRMER_TEMPLATE = config.get("templates", {}).get("confirmer_achat")
 if _CONFIRMER_TEMPLATE:
     CONFIRMER_ACHAT_PATH = Path(config["base_dir"]) / _CONFIRMER_TEMPLATE
@@ -673,12 +693,7 @@ def on_tick_vente_saisie(fsm):
     qty_text = _qty_to_int_string(sale.get("qty")) or "1"
 
     # Renseigne d'abord le prix médian, puis la quantité reçue
-    hotkey(["ctrl", "a"])
-    type_text(price_text)
-    press_key("tab")
-    hotkey(["ctrl", "a"])
-    type_text(qty_text)
-    press_key("enter")
+    _fill_price_and_quantity(price_text, qty_text)
 
     sale["saisie_done"] = True
     return "VENTE_RETOUR_ACHAT"
