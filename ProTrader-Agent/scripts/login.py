@@ -148,6 +148,41 @@ def _get_fortune_line(fsm, slug: str, qty: str):
     return lookup.get(slug_key, {}).get(qty)
 
 
+def _compute_purchase_threshold(fortune_line):
+    """Return the maximum price allowed for a purchase based on fortune settings."""
+    if not isinstance(fortune_line, dict):
+        return None
+
+    margin_type = str(fortune_line.get("margin_type") or "").strip().lower()
+    margin_value = fortune_line.get("margin_value")
+    try:
+        margin_value = float(margin_value)
+    except (TypeError, ValueError):
+        return None
+
+    if margin_type == "percent":
+        median_value = fortune_line.get("median_price_7d")
+        try:
+            median_value = float(median_value)
+        except (TypeError, ValueError):
+            return None
+        threshold = median_value - (median_value * margin_value / 100.0)
+    elif margin_type == "absolute":
+        threshold = margin_value
+    else:
+        return None
+
+    try:
+        threshold = float(threshold)
+    except (TypeError, ValueError):
+        return None
+
+    if threshold < 0:
+        threshold = 0
+
+    return int(threshold)
+
+
 def on_enter_lancement(fsm):
     _send_state("LANCEMENT")
     open_dofus()
@@ -320,7 +355,52 @@ def on_tick_scan_prix(fsm):
             price_val = int(val)
             _send_price(slug=slug, qty=qty, price=price_val)
             fortune_line = _get_fortune_line(fsm, slug, qty)
+            should_purchase = False
+            target_price = None
             if fortune_line:
+                target_price = _compute_purchase_threshold(fortune_line)
+                if target_price is None:
+                    logger.info(
+                        "Seuil d'achat introuvable pour %s (%s), marge=%s",
+                        slug,
+                        qty,
+                        fortune_line.get("margin_type"),
+                    )
+                elif price_val > target_price:
+                    logger.debug(
+                        "Prix %d supérieur au seuil %d pour %s (%s), achat ignoré",
+                        price_val,
+                        target_price,
+                        slug,
+                        qty,
+                    )
+                else:
+                    current_kamas = getattr(getattr(fsm, "ctx", None), "current_kamas", None)
+                    kamas_value = None
+                    if current_kamas is not None:
+                        try:
+                            kamas_value = int(current_kamas)
+                        except (TypeError, ValueError):
+                            kamas_value = None
+                    if kamas_value is None:
+                        logger.info(
+                            "Fortune en kamas inconnue, achat ignoré pour %s (%s)",
+                            slug,
+                            qty,
+                        )
+                    else:
+                        max_allowed_price = max(0, int(kamas_value * 0.10))
+                        if price_val > max_allowed_price:
+                            logger.info(
+                                "Prix %d supérieur à 10%% de la fortune (%d) pour %s (%s), achat ignoré",
+                                price_val,
+                                max_allowed_price,
+                                slug,
+                                qty,
+                            )
+                        else:
+                            should_purchase = True
+            if should_purchase:
                 fsm.ctx.pending_purchase = {
                     "slug": slug,
                     "qty": qty,
@@ -330,9 +410,11 @@ def on_tick_scan_prix(fsm):
                     "click_done": False,
                 }
                 logger.info(
-                    "Fortune active pour %s (%s), déclenchement de l'achat",
+                    "Fortune active pour %s (%s), déclenchement de l'achat (prix=%d, seuil=%s)",
                     slug,
                     qty,
+                    price_val,
+                    target_price,
                 )
                 return "CLIC_ACHAT"
             fsm.ctx.scanned[qty] = price_val  # marquer comme scanné OK
@@ -407,6 +489,17 @@ def on_tick_clic_achat(fsm):
                     "template_path": getattr(fsm.ctx, "template_path", ""),
                 }
             )
+        current_kamas = getattr(fsm.ctx, "current_kamas", None)
+        price_paid = pending.get("price")
+        try:
+            price_paid_int = int(price_paid)
+        except (TypeError, ValueError):
+            price_paid_int = None
+        if price_paid_int is not None and current_kamas is not None:
+            try:
+                fsm.ctx.current_kamas = max(0, int(current_kamas) - price_paid_int)
+            except (TypeError, ValueError):
+                pass
         fsm.ctx.scanned[pending["qty"]] = pending["price"]
         fsm.ctx.pending_purchase = None
         return "SCAN_PRIX"
@@ -752,9 +845,16 @@ def on_tick_get_kamas(fsm):
         val = ocr_read_int(ocrzone, debug=True)
 
         if val is not None:
-            logger.info("Fortune actuelle : %d K", val)
-            _send_kamas(val)
-            return "ENTRER_RESSOURCE"
+            try:
+                kamas_value = int(val)
+            except (TypeError, ValueError):
+                kamas_value = None
+            if kamas_value is not None:
+                fsm.ctx.current_kamas = kamas_value
+                logger.info("Fortune actuelle : %d K", kamas_value)
+                _send_kamas(kamas_value)
+                return "ENTRER_RESSOURCE"
+            logger.warning("Valeur de kamas invalide détectée: %s", val)
 
 
 
@@ -813,6 +913,7 @@ def run(resources, fortune_lines=None):
         reset_scan=True,
         completed_purchases=[],
         current_sale=None,
+        current_kamas=None,
         right_half_region=_compute_right_half_region(),
         skip_recherche_click=False,
     )
