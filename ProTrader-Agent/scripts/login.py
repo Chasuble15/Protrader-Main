@@ -517,10 +517,15 @@ def on_tick_vente_selection_qte(fsm):
             )
             if candidate == qty:
                 time.sleep(1)
+                sale["selected_sale_qty"] = candidate
+                sale.pop("vente_fallback_click", None)
+                sale.pop("saisie_force_tab", None)
+                sale["vente_attempts"] = 0
+                return "VENTE_SAISIE"
             else:
                 move_click(res.center[0], res.center[1])
                 time.sleep(0.5)
-            return "VENTE_CLIQUER_VENTE"
+                return "VENTE_CLIQUER_VENTE"
 
     if not use_alternatives:
         sale["sel_attempts"] = sale.get("sel_attempts", 0) + 1
