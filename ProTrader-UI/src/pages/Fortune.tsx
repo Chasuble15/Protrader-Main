@@ -49,8 +49,10 @@ type ChartPoint = { x: number; y: number; rawTimestamp: string };
 
 type PurchaseTooltipGroup = {
   id: string;
-  left: number;
-  top: number;
+  anchorX: number;
+  anchorY: number;
+  tooltipLeft: number;
+  tooltipTop: number;
   purchases: PurchaseEvent[];
 };
 
@@ -64,7 +66,43 @@ export default function Fortune() {
   const [timeRange, setTimeRange] = useState<TimeRangeKey>("1w");
   const [purchases, setPurchases] = useState<PurchaseEvent[]>([]);
   const [tooltipGroups, setTooltipGroups] = useState<PurchaseTooltipGroup[]>([]);
+  const [hoveredTooltipId, setHoveredTooltipId] = useState<string | null>(null);
   const chartRef = useRef<ChartJS<"line"> | null>(null);
+  const hideTooltipTimeout = useRef<number | null>(null);
+
+  const clearHideTooltip = useCallback(() => {
+    if (hideTooltipTimeout.current !== null) {
+      window.clearTimeout(hideTooltipTimeout.current);
+      hideTooltipTimeout.current = null;
+    }
+  }, []);
+
+  const showTooltip = useCallback(
+    (id: string) => {
+      clearHideTooltip();
+      setHoveredTooltipId(id);
+    },
+    [clearHideTooltip],
+  );
+
+  const scheduleHideTooltip = useCallback(
+    (id: string) => {
+      clearHideTooltip();
+      hideTooltipTimeout.current = window.setTimeout(() => {
+        setHoveredTooltipId((prev) => (prev === id ? null : prev));
+        hideTooltipTimeout.current = null;
+      }, 120);
+    },
+    [clearHideTooltip],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (hideTooltipTimeout.current !== null) {
+        window.clearTimeout(hideTooltipTimeout.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -284,21 +322,28 @@ export default function Fortune() {
     positions.sort((a, b) => a.x - b.x);
 
     const thresholdPx = 56;
-    type GroupAccumulator = { xSum: number; count: number; yMin: number; purchases: PurchaseEvent[] };
+    type GroupAccumulator = {
+      xSum: number;
+      ySum: number;
+      count: number;
+      yMin: number;
+      purchases: PurchaseEvent[];
+    };
     const grouped: GroupAccumulator[] = [];
 
     for (const pos of positions) {
       const center = pos.x;
       const last = grouped[grouped.length - 1];
       if (!last) {
-        grouped.push({ xSum: center, count: 1, yMin: pos.y, purchases: [pos.purchase] });
+        grouped.push({ xSum: center, ySum: pos.y, count: 1, yMin: pos.y, purchases: [pos.purchase] });
         continue;
       }
       const lastCenter = last.xSum / last.count;
       if (Math.abs(center - lastCenter) > thresholdPx) {
-        grouped.push({ xSum: center, count: 1, yMin: pos.y, purchases: [pos.purchase] });
+        grouped.push({ xSum: center, ySum: pos.y, count: 1, yMin: pos.y, purchases: [pos.purchase] });
       } else {
         last.xSum += center;
+        last.ySum += pos.y;
         last.count += 1;
         if (pos.y < last.yMin) {
           last.yMin = pos.y;
@@ -309,15 +354,23 @@ export default function Fortune() {
 
     const tooltipData: PurchaseTooltipGroup[] = grouped.map((group) => {
       const avgX = group.xSum / group.count;
+      const avgY = group.ySum / group.count;
       const estimatedHeight = group.purchases.length * 22 + 18;
-      const left = Math.min(Math.max(avgX, area.left + 16), area.right - 16);
+      const tooltipLeft = Math.min(Math.max(avgX, area.left + 16), area.right - 16);
       const topBase = group.yMin - estimatedHeight;
-      const top = Math.min(
+      const tooltipTop = Math.min(
         Math.max(topBase, area.top + 8),
         area.bottom - estimatedHeight - 8,
       );
       const id = group.purchases.map((p) => `${p.id}-${p.datetime}`).join("|") || String(avgX);
-      return { id, left, top, purchases: group.purchases };
+      return {
+        id,
+        anchorX: avgX,
+        anchorY: avgY,
+        tooltipLeft,
+        tooltipTop,
+        purchases: group.purchases,
+      };
     });
 
     setTooltipGroups(tooltipData);
@@ -422,36 +475,55 @@ export default function Fortune() {
       <div className="relative h-[360px]">
         <Line ref={chartRef} data={data} options={options} style={{ height: "100%" }} />
         <div className="pointer-events-none absolute inset-0">
-          {tooltipGroups.map((group) => (
-            <div
-              key={group.id}
-              className="absolute -translate-x-1/2"
-              style={{ left: `${group.left}px`, top: `${group.top}px` }}
-            >
-              <div className="flex flex-col gap-1 rounded-lg border border-amber-300 bg-white/95 px-2 py-1 text-xs shadow-md">
-                {group.purchases.map((purchase, idx) => {
-                  const quantityLabel =
-                    purchase.quantityLabel ??
-                    (purchase.quantity > 0 ? `x${purchase.quantity}` : "?");
-                  const key = `${purchase.id}-${purchase.datetime}-${idx}`;
-                  const img = buildImgSrc(purchase.imgBlob);
-                  return (
-                    <div key={key} className="flex items-center gap-1 whitespace-nowrap">
-                      {img ? (
-                        <img src={img} alt="" className="h-4 w-4 rounded object-cover" />
-                      ) : (
-                        <div className="h-4 w-4 rounded bg-gray-200" />
-                      )}
-                      <span>{quantityLabel}</span>
-                      <span className="font-semibold text-amber-600">
-                        {formatKamas(purchase.totalPrice)}
-                      </span>
+          {tooltipGroups.map((group) => {
+            const isActive = hoveredTooltipId === group.id;
+            const purchaseCount = group.purchases.length;
+            return (
+              <div key={group.id}>
+                <button
+                  type="button"
+                  className="pointer-events-auto absolute -translate-x-1/2 -translate-y-1/2 h-3 w-3 rounded-full border border-white bg-amber-500 shadow transition hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                  style={{ left: `${group.anchorX}px`, top: `${group.anchorY}px` }}
+                  onMouseEnter={() => showTooltip(group.id)}
+                  onMouseLeave={() => scheduleHideTooltip(group.id)}
+                  onFocus={() => showTooltip(group.id)}
+                  onBlur={() => scheduleHideTooltip(group.id)}
+                  aria-label={`Afficher ${purchaseCount} ${purchaseCount > 1 ? "achats" : "achat"}`}
+                />
+                {isActive && (
+                  <div
+                    className="pointer-events-auto absolute -translate-x-1/2"
+                    style={{ left: `${group.tooltipLeft}px`, top: `${group.tooltipTop}px` }}
+                    onMouseEnter={() => showTooltip(group.id)}
+                    onMouseLeave={() => scheduleHideTooltip(group.id)}
+                  >
+                    <div className="flex flex-col gap-1 rounded-lg border border-amber-300 bg-white/95 px-2 py-1 text-xs shadow-md">
+                      {group.purchases.map((purchase, idx) => {
+                        const quantityLabel =
+                          purchase.quantityLabel ??
+                          (purchase.quantity > 0 ? `x${purchase.quantity}` : "?");
+                        const key = `${purchase.id}-${purchase.datetime}-${idx}`;
+                        const img = buildImgSrc(purchase.imgBlob);
+                        return (
+                          <div key={key} className="flex items-center gap-1 whitespace-nowrap">
+                            {img ? (
+                              <img src={img} alt="" className="h-4 w-4 rounded object-cover" />
+                            ) : (
+                              <div className="h-4 w-4 rounded bg-gray-200" />
+                            )}
+                            <span>{quantityLabel}</span>
+                            <span className="font-semibold text-amber-600">
+                              {formatKamas(purchase.totalPrice)}
+                            </span>
+                          </div>
+                        );
+                      })}
                     </div>
-                  );
-                })}
+                  </div>
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
       {items.length > 0 && (
