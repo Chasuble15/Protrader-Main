@@ -2,6 +2,7 @@ import os
 import types
 from pathlib import Path
 import time
+from datetime import datetime, timezone
 from typing import Optional, Tuple
 
 import mss
@@ -122,6 +123,79 @@ def _send_kamas(amount: int) -> None:
         "ts": int(time.time()),
         "data": {
             "amount": int(amount),
+        },
+    }
+    if bus.client:
+        bus.client.send(frame)
+    else:
+        print("[WARN] bus.client indisponible, payload:", frame)
+
+
+def _try_read_kamas_amount() -> Optional[int]:
+    """Tente de lire la fortune en kamas à l'écran."""
+    res = find_template_on_screen(
+        template_path=str(KAMAS_PATH),
+        debug=True,
+    )
+
+    if not res:
+        return None
+
+    ocrzone = (res.left - 250, res.top, 245, res.height)
+    ocrzone = tuple(int(v) for v in ocrzone)
+    val = ocr_read_int(ocrzone, debug=True)
+
+    if val is None:
+        return None
+
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        logger.warning("Valeur de kamas invalide détectée: %s", val)
+        return None
+
+
+def _parse_quantity_label(qty: str) -> int:
+    """Convertit un libellé de quantité (x1, x10, …) en entier."""
+    if not qty:
+        return 0
+    qty = str(qty).strip().lower()
+    if qty.startswith("x"):
+        qty = qty[1:]
+    try:
+        return int(qty)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _current_iso_datetime() -> str:
+    """Retourne l'heure courante en ISO8601 (UTC)."""
+    return (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+
+def _send_purchase_event(
+    resource: str,
+    quantity_label: str,
+    quantity_value: int,
+    unit_price: float,
+    total_amount: int,
+) -> None:
+    """Envoie au serveur le détail d'un achat validé."""
+    frame = {
+        "type": "purchase_event",
+        "ts": int(time.time()),
+        "data": {
+            "resource": resource,
+            "quantity_label": quantity_label,
+            "quantity": quantity_value,
+            "price": float(unit_price),
+            "amount": int(total_amount),
+            "date": _current_iso_datetime(),
         },
     }
     if bus.client:
@@ -297,6 +371,8 @@ CLIC_ACHAT_OFFSET_PX = 100
 VENTE_CLICK_MAX_ATTEMPTS = 6
 VENTE_FALLBACK_REGION_RATIO = 0.28
 VENTE_FALLBACK_OFFSET_PX = 240
+PURCHASE_MAX_RETRIES = 5
+KAMAS_CHECK_MAX_ATTEMPTS = 10
 
 def on_enter_scan_prix(fsm):
     _send_state("SCAN_PRIX")
@@ -408,6 +484,7 @@ def on_tick_scan_prix(fsm):
                     "ocrzone": ocrzone,
                     "fortune_line": fortune_line,
                     "click_done": False,
+                    "retry_count": 0,
                 }
                 logger.info(
                     "Fortune active pour %s (%s), déclenchement de l'achat (prix=%d, seuil=%s)",
@@ -454,6 +531,7 @@ def on_tick_clic_achat(fsm):
         click_x = int(left + width + CLIC_ACHAT_OFFSET_PX)
         click_y = int(top + height / 2)
         logger.debug("CLIC_ACHAT: clic sur Acheter en (%d, %d)", click_x, click_y)
+        pending["attempt_start_kamas"] = getattr(fsm.ctx, "current_kamas", None)
         move_click(click_x, click_y)
         pending["click_done"] = True
         time.sleep(1)
@@ -478,31 +556,112 @@ def on_tick_clic_achat(fsm):
         )
         move_click(res.center[0], res.center[1])
         time.sleep(1)
-        sale_queue = getattr(fsm.ctx, "completed_purchases", None)
-        if isinstance(sale_queue, list):
-            sale_queue.append(
-                {
-                    "slug": pending.get("slug"),
-                    "qty": pending.get("qty"),
-                    "price": pending.get("price"),
-                    "fortune_line": pending.get("fortune_line", {}),
-                    "template_path": getattr(fsm.ctx, "template_path", ""),
-                }
-            )
-        current_kamas = getattr(fsm.ctx, "current_kamas", None)
-        price_paid = pending.get("price")
-        try:
-            price_paid_int = int(price_paid)
-        except (TypeError, ValueError):
-            price_paid_int = None
-        if price_paid_int is not None and current_kamas is not None:
-            try:
-                fsm.ctx.current_kamas = max(0, int(current_kamas) - price_paid_int)
-            except (TypeError, ValueError):
-                pass
-        fsm.ctx.scanned[pending["qty"]] = pending["price"]
-        fsm.ctx.pending_purchase = None
+        pending["kamas_check_attempts"] = 0
+        return "VERIFIER_ACHAT"
+
+
+def on_enter_verifier_achat(fsm):
+    _send_state("VERIFIER_ACHAT")
+
+
+def on_tick_verifier_achat(fsm):
+    pending = getattr(fsm.ctx, "pending_purchase", None)
+    if not pending:
+        logger.warning("VERIFIER_ACHAT sans achat en attente, retour au scan")
         return "SCAN_PRIX"
+
+    kamas_value = _try_read_kamas_amount()
+    if kamas_value is None:
+        attempts = int(pending.get("kamas_check_attempts", 0)) + 1
+        pending["kamas_check_attempts"] = attempts
+        if attempts >= KAMAS_CHECK_MAX_ATTEMPTS:
+            logger.warning(
+                "Impossible de lire la fortune après achat pour %s (%s) (tentative %d)",
+                pending.get("slug"),
+                pending.get("qty"),
+                attempts,
+            )
+            pending["kamas_check_attempts"] = 0
+        return
+
+    previous_kamas = pending.get("attempt_start_kamas")
+    if previous_kamas is None:
+        previous_kamas = getattr(fsm.ctx, "current_kamas", None)
+    try:
+        previous_kamas = int(previous_kamas) if previous_kamas is not None else None
+    except (TypeError, ValueError):
+        previous_kamas = None
+
+    if previous_kamas is not None and kamas_value == previous_kamas:
+        pending["retry_count"] = int(pending.get("retry_count", 0)) + 1
+        logger.info(
+            "Achat non confirmé (fortune inchangée) pour %s (%s), tentative %d",
+            pending.get("slug"),
+            pending.get("qty"),
+            pending["retry_count"],
+        )
+        if pending["retry_count"] >= PURCHASE_MAX_RETRIES:
+            logger.warning(
+                "Abandon de l'achat après %d tentatives pour %s (%s)",
+                pending["retry_count"],
+                pending.get("slug"),
+                pending.get("qty"),
+            )
+            fsm.ctx.scanned[pending["qty"]] = pending.get("price")
+            fsm.ctx.pending_purchase = None
+            return "SCAN_PRIX"
+        pending["click_done"] = False
+        pending["kamas_check_attempts"] = 0
+        time.sleep(1)
+        return "CLIC_ACHAT"
+
+    slug = pending.get("slug", "")
+    qty_label = pending.get("qty", "")
+    price_paid = pending.get("price")
+    try:
+        total_amount = int(price_paid)
+    except (TypeError, ValueError):
+        total_amount = 0
+
+    quantity_value = _parse_quantity_label(qty_label)
+    unit_price = float(total_amount)
+    if quantity_value > 0:
+        unit_price = float(total_amount) / float(quantity_value)
+
+    logger.info(
+        "Achat confirmé pour %s (%s) : %d kamas (fortune %s → %d)",
+        slug,
+        qty_label,
+        total_amount,
+        previous_kamas if previous_kamas is not None else "?",
+        kamas_value,
+    )
+
+    fsm.ctx.current_kamas = kamas_value
+    _send_kamas(kamas_value)
+    _send_purchase_event(
+        resource=slug,
+        quantity_label=qty_label,
+        quantity_value=quantity_value,
+        unit_price=unit_price,
+        total_amount=total_amount,
+    )
+
+    sale_queue = getattr(fsm.ctx, "completed_purchases", None)
+    if isinstance(sale_queue, list):
+        sale_queue.append(
+            {
+                "slug": slug,
+                "qty": qty_label,
+                "price": total_amount,
+                "fortune_line": pending.get("fortune_line", {}),
+                "template_path": getattr(fsm.ctx, "template_path", ""),
+            }
+        )
+
+    fsm.ctx.scanned[pending["qty"]] = pending.get("price")
+    fsm.ctx.pending_purchase = None
+    return "SCAN_PRIX"
 
 
 def on_enter_vente_onglet(fsm):
@@ -834,27 +993,13 @@ def on_enter_get_kamas(fsm):
 
 def on_tick_get_kamas(fsm):
     # Rechercher le symbole de kamas dans l'interface
-    res = find_template_on_screen(
-        template_path=str(KAMAS_PATH),
-        debug=True,
-    )
+    kamas_value = _try_read_kamas_amount()
 
-    if res:
-        # Si trouvé, lire le montant de kamas via OCR
-        ocrzone = (res.left - 250, res.top, 245, res.height)
-        val = ocr_read_int(ocrzone, debug=True)
-
-        if val is not None:
-            try:
-                kamas_value = int(val)
-            except (TypeError, ValueError):
-                kamas_value = None
-            if kamas_value is not None:
-                fsm.ctx.current_kamas = kamas_value
-                logger.info("Fortune actuelle : %d K", kamas_value)
-                _send_kamas(kamas_value)
-                return "ENTRER_RESSOURCE"
-            logger.warning("Valeur de kamas invalide détectée: %s", val)
+    if kamas_value is not None:
+        fsm.ctx.current_kamas = kamas_value
+        logger.info("Fortune actuelle : %d K", kamas_value)
+        _send_kamas(kamas_value)
+        return "ENTRER_RESSOURCE"
 
 
 
@@ -871,6 +1016,11 @@ states = {
     "SELECTION_RESSOURCE": StateDef("SELECTION_RESSOURCE", on_enter=on_enter_selection_ressource, on_tick=on_tick_selection_ressource),
     "SCAN_PRIX": StateDef("SCAN_PRIX", on_enter=on_enter_scan_prix, on_tick=on_tick_scan_prix),
     "CLIC_ACHAT": StateDef("CLIC_ACHAT", on_enter=on_enter_clic_achat, on_tick=on_tick_clic_achat),
+    "VERIFIER_ACHAT": StateDef(
+        "VERIFIER_ACHAT",
+        on_enter=on_enter_verifier_achat,
+        on_tick=on_tick_verifier_achat,
+    ),
     "VENTE_ONGLET": StateDef("VENTE_ONGLET", on_enter=on_enter_vente_onglet, on_tick=on_tick_vente_onglet),
     "VENTE_SELECTION_RESSOURCE": StateDef(
         "VENTE_SELECTION_RESSOURCE",
