@@ -204,6 +204,32 @@ def _send_purchase_event(
         print("[WARN] bus.client indisponible, payload:", frame)
 
 
+def _send_sale_event(
+    resource: str,
+    quantity_label: str,
+    quantity_value: int,
+    unit_price: float,
+    total_amount: int,
+) -> None:
+    """Envoie au serveur le détail d'une vente validée."""
+    frame = {
+        "type": "sale_event",
+        "ts": int(time.time()),
+        "data": {
+            "resource": resource,
+            "quantity_label": quantity_label,
+            "quantity": quantity_value,
+            "price": float(unit_price),
+            "amount": int(total_amount),
+            "date": _current_iso_datetime(),
+        },
+    }
+    if bus.client:
+        bus.client.send(frame)
+    else:
+        print("[WARN] bus.client indisponible, payload:", frame)
+
+
 def _build_fortune_lookup(fortune_lines):
     lookup = {}
     for line in fortune_lines or []:
@@ -916,10 +942,34 @@ def on_tick_vente_saisie(fsm):
         logger.warning("Impossible de déterminer le prix de vente, valeur 0 utilisée")
         price_value = 0
 
-    price_text = str(max(0, price_value))
+    try:
+        total_amount = int(price_value)
+    except (TypeError, ValueError):
+        total_amount = 0
+    total_amount = max(0, total_amount)
+    price_text = str(total_amount)
 
     # Renseigne le prix puis valide la saisie
     _fill_price(price_text)
+
+    quantity_label = (
+        sale.get("selected_sale_qty")
+        or sale.get("selected_sel_qty")
+        or sale.get("qty")
+        or ""
+    )
+    quantity_value = _parse_quantity_label(quantity_label)
+    unit_price = float(total_amount)
+    if quantity_value > 0:
+        unit_price = float(total_amount) / float(quantity_value)
+
+    _send_sale_event(
+        resource=str(sale.get("slug", "")),
+        quantity_label=str(quantity_label),
+        quantity_value=quantity_value,
+        unit_price=unit_price,
+        total_amount=total_amount,
+    )
 
     sale["saisie_done"] = True
     return "VENTE_RETOUR_ACHAT"

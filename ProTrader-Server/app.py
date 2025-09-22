@@ -155,6 +155,37 @@ async def ws_agent(ws: WebSocket):
                 except Exception as e:
                     print("[backend] save_purchase failed:", e)
                     print("[backend] from agent:", msg)
+            elif msg.get("type") == "sale_event":
+                try:
+                    d = msg.get("data", {}) or {}
+                    quantity = d.get("quantity", 0)
+                    amount = d.get("amount", 0)
+                    price_value = d.get("price", 0)
+                    try:
+                        quantity_int = int(quantity)
+                    except (TypeError, ValueError):
+                        quantity_int = 0
+                    try:
+                        total_int = int(amount)
+                    except (TypeError, ValueError):
+                        total_int = 0
+                    try:
+                        unit_price = float(price_value)
+                    except (TypeError, ValueError):
+                        unit_price = 0.0
+                    quantity_label = d.get("quantity_label") or d.get("qty_label") or d.get("qty") or ""
+                    save_sale_row(
+                        resource=d.get("resource", ""),
+                        quantity=quantity_int,
+                        quantity_label=str(quantity_label),
+                        unit_price=unit_price,
+                        total_price=total_int,
+                        ts=msg.get("ts"),
+                        date_str=d.get("date"),
+                    )
+                except Exception as e:
+                    print("[backend] save_sale failed:", e)
+                    print("[backend] from agent:", msg)
             await broadcast_ui(msg)
     except WebSocketDisconnect:
         pass
@@ -767,6 +798,93 @@ def save_purchase_row(
         conn.execute(
             """
             INSERT INTO purchase_history (
+                resource, quantity, quantity_label, unit_price, total_price, datetime
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                resource,
+                quantity_int,
+                label,
+                unit_price_val,
+                total_int,
+                iso,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def ensure_sale_schema(conn: sqlite3.Connection):
+    cur = conn.cursor()
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sale_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            resource TEXT NOT NULL,
+            quantity INTEGER NOT NULL,
+            quantity_label TEXT,
+            unit_price REAL NOT NULL,
+            total_price INTEGER NOT NULL,
+            datetime TEXT NOT NULL
+                DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+        )
+        """
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sale_history_dt ON sale_history(datetime)"
+    )
+    cur.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sale_history_resource_dt ON sale_history(resource, datetime)"
+    )
+    conn.commit()
+
+
+def save_sale_row(
+    resource: str,
+    quantity: int,
+    quantity_label: str,
+    unit_price: float,
+    total_price: int,
+    ts: int | None,
+    date_str: str | None,
+):
+    resource = (resource or "").strip()
+    if not resource:
+        raise ValueError("resource manquant")
+    try:
+        quantity_int = int(quantity)
+    except (TypeError, ValueError):
+        quantity_int = 0
+    if quantity_int <= 0:
+        raise ValueError("quantité invalide")
+
+    try:
+        total_int = int(total_price)
+    except (TypeError, ValueError):
+        total_int = 0
+    if total_int < 0:
+        total_int = 0
+
+    try:
+        unit_price_val = float(unit_price)
+    except (TypeError, ValueError):
+        unit_price_val = 0.0
+
+    iso = _normalize_iso_datetime(date_str, ts)
+
+    label = None
+    if isinstance(quantity_label, str):
+        label = quantity_label.strip()
+        if not label:
+            label = None
+
+    conn = get_db()
+    try:
+        ensure_sale_schema(conn)
+        conn.execute(
+            """
+            INSERT INTO sale_history (
                 resource, quantity, quantity_label, unit_price, total_price, datetime
             ) VALUES (?, ?, ?, ?, ?, ?)
             """,
