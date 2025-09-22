@@ -848,6 +848,79 @@ def get_kamas_history(
     conn.close()
     return {"points": points}
 
+
+@app.get("/api/purchase_history")
+def get_purchase_history(
+    date_from: str | None = Query(default=None, description="Début (ISO8601)"),
+    date_to: str | None = Query(default=None, description="Fin (ISO8601)"),
+    limit: int = Query(default=1000, ge=1, le=20000),
+):
+    """Retourne la liste chronologique des achats enregistrés."""
+
+    conn = get_db()
+    ensure_purchase_schema(conn)
+    cur = conn.cursor()
+
+    dt_from, dt_to = _parse_iso_to_utc_bounds(date_from, date_to)
+
+    where: list[str] = []
+    params: list[Any] = []
+
+    if dt_from:
+        if len(dt_from) == 10:
+            where.append("p.datetime >= ?")
+            params.append(dt_from + "T00:00:00Z")
+        else:
+            where.append("p.datetime >= ?")
+            params.append(dt_from)
+    if dt_to:
+        if len(dt_to) == 10:
+            where.append("p.datetime < ?")
+            params.append(dt_to + "T23:59:59Z")
+        else:
+            where.append("p.datetime <= ?")
+            params.append(dt_to)
+
+    where_sql = "WHERE " + " AND ".join(where) if where else ""
+
+    cur.execute(
+        f"""
+        SELECT p.id, p.resource, p.quantity, p.quantity_label,
+               p.unit_price, p.total_price, p.datetime,
+               i.img_blob
+        FROM purchase_history p
+        LEFT JOIN items i ON i.slug_fr = p.resource
+        {where_sql}
+        ORDER BY p.datetime ASC
+        LIMIT ?
+        """,
+        (*params, limit),
+    )
+    rows = cur.fetchall()
+
+    purchases: list[dict[str, Any]] = []
+    for r in rows:
+        blob = r["img_blob"]
+        if blob is not None and isinstance(blob, (bytes, bytearray)):
+            img_b64 = base64.b64encode(blob).decode("ascii")
+        else:
+            img_b64 = ""
+        purchases.append(
+            {
+                "id": r["id"],
+                "resource": r["resource"],
+                "quantity": r["quantity"],
+                "quantity_label": r["quantity_label"],
+                "unit_price": r["unit_price"],
+                "total_price": r["total_price"],
+                "datetime": r["datetime"],
+                "img_blob": img_b64,
+            }
+        )
+
+    conn.close()
+    return {"purchases": purchases}
+
 # Parsing ISO8601 très permissif (YYYY-MM-DD ou YYYY-MM-DDTHH:MM:SSZ)
 def _parse_iso_to_utc_bounds(date_from: str | None, date_to: str | None) -> Tuple[str | None, str | None]:
     def _norm(s: str) -> str:
