@@ -268,8 +268,8 @@ export async function getKamasHistory(
 ): Promise<KamasPoint[]> {
   const url = new URL("/api/kamas_history", API_BASE);
   if (bucket) url.searchParams.set("bucket", bucket);
-  if (start) url.searchParams.set("date_from", normalizeDateParam(start));
-  if (end) url.searchParams.set("date_to", normalizeDateParam(end));
+  if (start) url.searchParams.set("start", normalizeDateParam(start));
+  if (end) url.searchParams.set("end", normalizeDateParam(end));
   const data = await fetchJSON(url.toString());
   return (data?.points ?? []) as KamasPoint[];
 }
