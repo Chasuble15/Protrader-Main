@@ -1,14 +1,16 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Chart as ChartJS, LinearScale, PointElement, LineElement, Tooltip, Legend } from "chart.js";
 import { Line } from "react-chartjs-2";
 import {
   getKamasHistory,
+  getPurchaseHistory,
   loadSelection,
   getHdvPriceStat,
   saveSelectionSettings,
   type SelectedItem,
   type KamasPoint,
   type Qty,
+  type PurchaseEvent,
 } from "../api";
 
 ChartJS.register(LinearScale, PointElement, LineElement, Tooltip, Legend);
@@ -23,6 +25,34 @@ const parseTimestamp = (t: string): number => {
 
 const QTY_LIST: Qty[] = ["x1", "x10", "x100", "x1000"];
 
+type TimeRangeKey = "1d" | "3d" | "1w" | "1m" | "all";
+
+type TimeRangeConfig = {
+  label: string;
+  durationMs?: number;
+  bucket: "raw" | "minute" | "hour" | "day";
+  purchaseLimit: number;
+};
+
+const DAY_MS = 24 * 3600 * 1000;
+
+const TIME_RANGES: Record<TimeRangeKey, TimeRangeConfig> = {
+  "1d": { label: "1 jour", durationMs: DAY_MS, bucket: "raw", purchaseLimit: 200 },
+  "3d": { label: "3 jours", durationMs: 3 * DAY_MS, bucket: "hour", purchaseLimit: 400 },
+  "1w": { label: "1 semaine", durationMs: 7 * DAY_MS, bucket: "hour", purchaseLimit: 600 },
+  "1m": { label: "1 mois", durationMs: 30 * DAY_MS, bucket: "day", purchaseLimit: 1200 },
+  all: { label: "All time", bucket: "day", purchaseLimit: 2000 },
+};
+
+type ChartPoint = { x: number; y: number; rawTimestamp: string };
+
+type PurchaseTooltipGroup = {
+  id: string;
+  left: number;
+  top: number;
+  purchases: PurchaseEvent[];
+};
+
 export default function Fortune() {
   const [points, setPoints] = useState<KamasPoint[]>([]);
   const [items, setItems] = useState<SelectedItem[]>([]);
@@ -30,17 +60,38 @@ export default function Fortune() {
   const [settings, setSettings] = useState<
     Record<string, { marginType: "percent" | "absolute"; value: number; active: boolean }>
   >({});
+  const [timeRange, setTimeRange] = useState<TimeRangeKey>("1w");
+  const [purchases, setPurchases] = useState<PurchaseEvent[]>([]);
+  const [tooltipGroups, setTooltipGroups] = useState<PurchaseTooltipGroup[]>([]);
+  const chartRef = useRef<ChartJS<"line"> | null>(null);
 
   useEffect(() => {
-    (async () => {
+    let cancelled = false;
+    const fetchData = async () => {
+      const cfg = TIME_RANGES[timeRange];
+      const now = new Date();
+      const endIso = now.toISOString();
+      const startIso = cfg.durationMs ? new Date(now.getTime() - cfg.durationMs).toISOString() : undefined;
       try {
-        const pts = await getKamasHistory("raw");
-        setPoints(pts);
+        const [pts, purchaseList] = await Promise.all([
+          getKamasHistory(cfg.bucket, startIso, endIso),
+          getPurchaseHistory(startIso, endIso, cfg.purchaseLimit),
+        ]);
+        if (!cancelled) {
+          setPoints(pts);
+          setPurchases(purchaseList);
+        }
       } catch (e) {
-        console.error("Failed to load kamas history", e);
+        if (!cancelled) {
+          console.error("Failed to load fortune history", e);
+        }
       }
-    })();
-  }, []);
+    };
+    fetchData();
+    return () => {
+      cancelled = true;
+    };
+  }, [timeRange]);
 
   useEffect(() => {
     (async () => {
@@ -92,14 +143,28 @@ export default function Fortune() {
     })();
   }, [items]);
 
-  const imgSrc = (it: SelectedItem) => {
-    if (!it.img_blob) return "";
-    const maybePng = it.img_blob.startsWith("iVBOR");
+  const buildImgSrc = (blob?: string | null) => {
+    if (!blob) return "";
+    const maybePng = blob.startsWith("iVBOR");
     const mime = maybePng ? "image/png" : "image/jpeg";
-    return `data:${mime};base64,${it.img_blob}`;
+    return `data:${mime};base64,${blob}`;
   };
 
+  const imgSrc = (it: SelectedItem) => buildImgSrc(it.img_blob);
+
   const formatKamas = (v: number) => `${Math.round(v).toLocaleString("fr-FR")} K`;
+
+  const formatDateTime = useCallback((value: number | string) => {
+    const timestamp = typeof value === "number" ? value : Number(value);
+    if (!Number.isFinite(timestamp)) {
+      return String(value);
+    }
+    return new Date(timestamp).toLocaleString("fr-FR", {
+      dateStyle: "short",
+      timeStyle: "medium",
+      timeZone: "UTC",
+    });
+  }, []);
 
   const updateSetting = (
     key: string,
@@ -126,70 +191,266 @@ export default function Fortune() {
     }
   };
 
-  const data = {
-    datasets: [
-      {
-        label: "Kamas",
-        data: points.map((p) => ({
-          x: parseTimestamp(p.t),
-          y: p.amount,
-          rawTimestamp: p.t,
-        })),
-        borderColor: "#f59e0b",
-        backgroundColor: "#f59e0b",
-        tension: 0.1,
-      },
-    ],
-  };
+  const kamasSeries = useMemo<ChartPoint[]>(() => {
+    return points
+      .map((p) => ({
+        x: parseTimestamp(p.t),
+        y: p.amount,
+        rawTimestamp: p.t,
+      }))
+      .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y))
+      .sort((a, b) => a.x - b.x);
+  }, [points]);
 
-  const formatDateTime = (value: number | string) => {
-    const timestamp = typeof value === "number" ? value : Number(value);
-    if (!Number.isFinite(timestamp)) {
-      return String(value);
+  const findClosestAmount = useCallback(
+    (timestamp: number) => {
+      if (kamasSeries.length === 0) return null;
+      let low = 0;
+      let high = kamasSeries.length;
+      while (low < high) {
+        const mid = Math.floor((low + high) / 2);
+        if (kamasSeries[mid].x < timestamp) {
+          low = mid + 1;
+        } else {
+          high = mid;
+        }
+      }
+      const candidates: ChartPoint[] = [];
+      if (low < kamasSeries.length) candidates.push(kamasSeries[low]);
+      if (low > 0) candidates.push(kamasSeries[low - 1]);
+      if (candidates.length === 0) {
+        return kamasSeries[0].y;
+      }
+      let best = candidates[0];
+      let minDelta = Math.abs(candidates[0].x - timestamp);
+      for (let i = 1; i < candidates.length; i += 1) {
+        const delta = Math.abs(candidates[i].x - timestamp);
+        if (delta < minDelta) {
+          minDelta = delta;
+          best = candidates[i];
+        }
+      }
+      return best.y;
+    },
+    [kamasSeries],
+  );
+
+  const recomputeTooltips = useCallback(() => {
+    const chart = chartRef.current;
+    if (!chart || !chart.scales?.x || !chart.scales?.y || !chart.chartArea) {
+      setTooltipGroups([]);
+      return;
     }
-    return new Date(timestamp).toLocaleString("fr-FR", {
-      dateStyle: "short",
-      timeStyle: "medium",
-      timeZone: "UTC",
-    });
-  };
+    if (purchases.length === 0 || kamasSeries.length === 0) {
+      setTooltipGroups([]);
+      return;
+    }
 
-  const options = {
-    parsing: false,
-    responsive: true,
-    scales: {
-      x: {
-        type: "linear" as const,
-        ticks: {
-          callback: (value: number | string) => formatDateTime(value),
+    const xScale: any = chart.scales.x;
+    const yScale: any = chart.scales.y;
+    const area = chart.chartArea;
+    const rawMin = xScale.min;
+    const rawMax = xScale.max;
+    const min = typeof rawMin === "number" ? rawMin : Number(rawMin ?? Number.NEGATIVE_INFINITY);
+    const max = typeof rawMax === "number" ? rawMax : Number(rawMax ?? Number.POSITIVE_INFINITY);
+
+    const positions: Array<{ purchase: PurchaseEvent; x: number; y: number }> = [];
+    for (const purchase of purchases) {
+      const ts = parseTimestamp(purchase.datetime);
+      if (!Number.isFinite(ts)) continue;
+      if (Number.isFinite(min) && ts < min) continue;
+      if (Number.isFinite(max) && ts > max) continue;
+
+      const x = xScale.getPixelForValue(ts);
+      if (!Number.isFinite(x)) continue;
+
+      const amount = findClosestAmount(ts);
+      const fallbackAmount = kamasSeries[kamasSeries.length - 1]?.y ?? 0;
+      const yValue = amount ?? fallbackAmount;
+      const y = yScale.getPixelForValue(yValue);
+      if (!Number.isFinite(y)) continue;
+
+      positions.push({ purchase, x, y });
+    }
+
+    if (positions.length === 0) {
+      setTooltipGroups([]);
+      return;
+    }
+
+    positions.sort((a, b) => a.x - b.x);
+
+    const thresholdPx = 56;
+    type GroupAccumulator = { xSum: number; count: number; yMin: number; purchases: PurchaseEvent[] };
+    const grouped: GroupAccumulator[] = [];
+
+    for (const pos of positions) {
+      const center = pos.x;
+      const last = grouped[grouped.length - 1];
+      if (!last) {
+        grouped.push({ xSum: center, count: 1, yMin: pos.y, purchases: [pos.purchase] });
+        continue;
+      }
+      const lastCenter = last.xSum / last.count;
+      if (Math.abs(center - lastCenter) > thresholdPx) {
+        grouped.push({ xSum: center, count: 1, yMin: pos.y, purchases: [pos.purchase] });
+      } else {
+        last.xSum += center;
+        last.count += 1;
+        if (pos.y < last.yMin) {
+          last.yMin = pos.y;
+        }
+        last.purchases.push(pos.purchase);
+      }
+    }
+
+    const tooltipData: PurchaseTooltipGroup[] = grouped.map((group) => {
+      const avgX = group.xSum / group.count;
+      const estimatedHeight = group.purchases.length * 22 + 18;
+      const left = Math.min(Math.max(avgX, area.left + 16), area.right - 16);
+      const topBase = group.yMin - estimatedHeight;
+      const top = Math.min(
+        Math.max(topBase, area.top + 8),
+        area.bottom - estimatedHeight - 8,
+      );
+      const id = group.purchases.map((p) => `${p.id}-${p.datetime}`).join("|") || String(avgX);
+      return { id, left, top, purchases: group.purchases };
+    });
+
+    setTooltipGroups(tooltipData);
+  }, [chartRef, findClosestAmount, kamasSeries, purchases]);
+
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => {
+      recomputeTooltips();
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [recomputeTooltips]);
+
+  useEffect(() => {
+    const handleResize = () => {
+      recomputeTooltips();
+    };
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, [recomputeTooltips]);
+
+  const data = useMemo(
+    () => ({
+      datasets: [
+        {
+          label: "Kamas",
+          data: kamasSeries,
+          borderColor: "#f59e0b",
+          backgroundColor: "#f59e0b",
+          tension: 0.1,
         },
-      },
-      y: {
-        type: "linear" as const,
-        beginAtZero: true,
-      },
-    },
-    plugins: {
-      legend: { display: false },
-      tooltip: {
-        callbacks: {
-          title: (items: any[]) => {
-            const raw = items[0]?.raw as { rawTimestamp?: string; x: number };
-            if (raw?.rawTimestamp) {
-              return raw.rawTimestamp.replace("T", " ").replace("Z", " UTC");
-            }
-            return formatDateTime(items[0].parsed.x as number);
+      ],
+    }),
+    [kamasSeries],
+  );
+
+  const options = useMemo(
+    () => ({
+      parsing: false,
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: {
+          type: "linear" as const,
+          ticks: {
+            callback: (value: number | string) => formatDateTime(value),
           },
-          label: (item: any) => `${item.parsed.y as number} K`,
+        },
+        y: {
+          type: "linear" as const,
+          beginAtZero: true,
         },
       },
-    },
-  };
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            title: (items: any[]) => {
+              const raw = items[0]?.raw as { rawTimestamp?: string; x: number };
+              if (raw?.rawTimestamp) {
+                return raw.rawTimestamp.replace("T", " ").replace("Z", " UTC");
+              }
+              return formatDateTime(items[0].parsed.x as number);
+            },
+            label: (item: any) =>
+              `${Math.round(item.parsed.y as number).toLocaleString("fr-FR")} K`,
+          },
+        },
+      },
+      animation: {
+        duration: 0,
+        onComplete: () => {
+          recomputeTooltips();
+        },
+      },
+    }),
+    [formatDateTime, recomputeTooltips],
+  );
 
   return (
     <div className="space-y-6 bg-white -m-4 p-4 min-h-full">
       <h2 className="text-lg font-semibold">Fortune</h2>
-      <Line data={data} options={options} />
+      <div className="flex flex-wrap items-center gap-2">
+        {Object.entries(TIME_RANGES).map(([key, cfg]) => {
+          const typedKey = key as TimeRangeKey;
+          const isActive = timeRange === typedKey;
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setTimeRange(typedKey)}
+              className={`rounded-full border px-3 py-1 text-sm transition ${
+                isActive
+                  ? "border-amber-500 bg-amber-100 text-amber-700"
+                  : "border-gray-200 text-gray-600 hover:border-amber-300 hover:text-amber-600"
+              }`}
+            >
+              {cfg.label}
+            </button>
+          );
+        })}
+      </div>
+      <div className="relative h-[360px]">
+        <Line ref={chartRef} data={data} options={options} style={{ height: "100%" }} />
+        <div className="pointer-events-none absolute inset-0">
+          {tooltipGroups.map((group) => (
+            <div
+              key={group.id}
+              className="absolute -translate-x-1/2"
+              style={{ left: `${group.left}px`, top: `${group.top}px` }}
+            >
+              <div className="flex flex-col gap-1 rounded-lg border border-amber-300 bg-white/95 px-2 py-1 text-xs shadow-md">
+                {group.purchases.map((purchase, idx) => {
+                  const quantityLabel =
+                    purchase.quantityLabel ??
+                    (purchase.quantity > 0 ? `x${purchase.quantity}` : "?");
+                  const key = `${purchase.id}-${purchase.datetime}-${idx}`;
+                  const img = buildImgSrc(purchase.imgBlob);
+                  return (
+                    <div key={key} className="flex items-center gap-1 whitespace-nowrap">
+                      {img ? (
+                        <img src={img} alt="" className="h-4 w-4 rounded object-cover" />
+                      ) : (
+                        <div className="h-4 w-4 rounded bg-gray-200" />
+                      )}
+                      <span>{quantityLabel}</span>
+                      <span className="font-semibold text-amber-600">
+                        {formatKamas(purchase.totalPrice)}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
       {items.length > 0 && (
         <div className="overflow-x-auto">
           <table className="w-full text-sm border-collapse">

@@ -251,6 +251,43 @@ export async function getKamasHistory(
   return (data?.points ?? []) as KamasPoint[];
 }
 
+export type PurchaseEvent = {
+  id: number;
+  resource: string;
+  quantity: number;
+  quantityLabel: string | null;
+  unitPrice: number;
+  totalPrice: number;
+  datetime: string;
+  imgBlob?: string;
+};
+
+export async function getPurchaseHistory(
+  start?: string,
+  end?: string,
+  limit = 1000,
+): Promise<PurchaseEvent[]> {
+  const url = new URL("/api/purchase_history", API_BASE);
+  if (start) url.searchParams.set("date_from", new Date(start).toISOString());
+  if (end) url.searchParams.set("date_to", new Date(end).toISOString());
+  if (limit) url.searchParams.set("limit", String(limit));
+  const data = await fetchJSON(url.toString());
+  const rawList = (data?.purchases ?? []) as any[];
+  return rawList.map((item) => ({
+    id: Number(item?.id ?? 0),
+    resource: String(item?.resource ?? ""),
+    quantity: Number(item?.quantity ?? 0),
+    quantityLabel:
+      typeof item?.quantity_label === "string" && item.quantity_label.trim() !== ""
+        ? item.quantity_label
+        : null,
+    unitPrice: Number(item?.unit_price ?? 0),
+    totalPrice: Number(item?.total_price ?? 0),
+    datetime: String(item?.datetime ?? ""),
+    imgBlob: typeof item?.img_blob === "string" ? item.img_blob : undefined,
+  }));
+}
+
 // PRICES -------------------------------------------------------------------
 
 export type HdvResource = {
