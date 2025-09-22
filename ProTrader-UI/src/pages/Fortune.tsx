@@ -7,6 +7,7 @@ import {
   loadSelection,
   getHdvPriceStat,
   saveSelectionSettings,
+  normalizeDateParam,
   type SelectedItem,
   type KamasPoint,
   type Qty,
@@ -70,8 +71,10 @@ export default function Fortune() {
     const fetchData = async () => {
       const cfg = TIME_RANGES[timeRange];
       const now = new Date();
-      const endIso = now.toISOString();
-      const startIso = cfg.durationMs ? new Date(now.getTime() - cfg.durationMs).toISOString() : undefined;
+      const endIso = normalizeDateParam(now);
+      const startIso = cfg.durationMs
+        ? normalizeDateParam(new Date(now.getTime() - cfg.durationMs))
+        : undefined;
       try {
         const [pts, purchaseList] = await Promise.all([
           getKamasHistory(cfg.bucket, startIso, endIso),
@@ -122,8 +125,8 @@ export default function Fortune() {
       return;
     }
     (async () => {
-      const start = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
-      const end = new Date().toISOString();
+      const start = normalizeDateParam(new Date(Date.now() - 7 * 24 * 3600 * 1000));
+      const end = normalizeDateParam(new Date());
       const map: Record<string, Record<Qty, number | null>> = {};
       for (const it of items) {
         const qmap: Record<Qty, number | null> = {} as Record<Qty, number | null>;

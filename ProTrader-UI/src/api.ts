@@ -37,6 +37,29 @@ function safeJson(txt: string) {
   try { return JSON.parse(txt); } catch { return null; }
 }
 
+const ISO_MILLISECONDS_REGEX = /\.\d{3}Z$/;
+
+export function normalizeDateParam(value: string | Date): string {
+  if (value instanceof Date) {
+    return value.toISOString().replace(ISO_MILLISECONDS_REGEX, "Z");
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return trimmed;
+  }
+  if (trimmed.endsWith("Z") && trimmed.includes("T")) {
+    return trimmed.replace(ISO_MILLISECONDS_REGEX, "Z");
+  }
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) {
+    return trimmed;
+  }
+  return parsed.toISOString().replace(ISO_MILLISECONDS_REGEX, "Z");
+}
+
 /** Envoie une commande vers /api/cmd (le backend relaie vers l’agent) */
 export async function sendCommand(cmd: string, args: any = {}, token: string, timeoutMs?: number) {
   const url = new URL("/api/cmd", API_BASE);
@@ -245,8 +268,8 @@ export async function getKamasHistory(
 ): Promise<KamasPoint[]> {
   const url = new URL("/api/kamas_history", API_BASE);
   if (bucket) url.searchParams.set("bucket", bucket);
-  if (start) url.searchParams.set("date_from", new Date(start).toISOString());
-  if (end) url.searchParams.set("date_to", new Date(end).toISOString());
+  if (start) url.searchParams.set("date_from", normalizeDateParam(start));
+  if (end) url.searchParams.set("date_to", normalizeDateParam(end));
   const data = await fetchJSON(url.toString());
   return (data?.points ?? []) as KamasPoint[];
 }
@@ -268,8 +291,8 @@ export async function getPurchaseHistory(
   limit = 1000,
 ): Promise<PurchaseEvent[]> {
   const url = new URL("/api/purchase_history", API_BASE);
-  if (start) url.searchParams.set("date_from", new Date(start).toISOString());
-  if (end) url.searchParams.set("date_to", new Date(end).toISOString());
+  if (start) url.searchParams.set("date_from", normalizeDateParam(start));
+  if (end) url.searchParams.set("date_to", normalizeDateParam(end));
   if (limit) url.searchParams.set("limit", String(limit));
   const data = await fetchJSON(url.toString());
   const rawList = (data?.purchases ?? []) as any[];
@@ -331,8 +354,8 @@ export async function getHdvTimeseries(
   if (qty) url.searchParams.set("qty", qty);
   if (bucket) url.searchParams.set("bucket", bucket);
   if (agg) url.searchParams.set("agg", agg);
-  if (start) url.searchParams.set("date_from", new Date(start).toISOString());
-  if (end) url.searchParams.set("date_to", new Date(end).toISOString());
+  if (start) url.searchParams.set("date_from", normalizeDateParam(start));
+  if (end) url.searchParams.set("date_to", normalizeDateParam(end));
   const data = await fetchJSON(url.toString());
   return (data?.series ?? []) as TimeseriesSeries[];
 }
@@ -361,8 +384,8 @@ export async function getHdvPriceStat(
   url.searchParams.set("slug", slug);
   url.searchParams.set("qty", qty);
   url.searchParams.set("stat", stat);
-  if (start) url.searchParams.set("date_from", new Date(start).toISOString());
-  if (end) url.searchParams.set("date_to", new Date(end).toISOString());
+  if (start) url.searchParams.set("date_from", normalizeDateParam(start));
+  if (end) url.searchParams.set("date_to", normalizeDateParam(end));
   return (await fetchJSON(url.toString())) as HdvPriceStat;
 }
 
