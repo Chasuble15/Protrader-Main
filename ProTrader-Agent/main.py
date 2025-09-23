@@ -8,7 +8,7 @@ from utils.logger import get_logger
 import bus
 
 import actions.config_actions
-import actions.test
+import actions.script_actions
 
 
 logger = get_logger(__name__)

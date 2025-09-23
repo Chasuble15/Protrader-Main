@@ -1,4 +1,4 @@
-# agent/actions/vision_actions.py
+# actions/script_actions.py - actions liées au lancement du script ProTrader
 import time
 import threading
 from typing import Any, Dict
