@@ -191,14 +191,30 @@ export default function Fortune() {
     return `data:${mime};base64,${blob}`;
   };
 
-  const imgSrc = (it: SelectedItem) => buildImgSrc(it.img_blob);
+const imgSrc = (it: SelectedItem) => buildImgSrc(it.img_blob);
 
-  const formatKamas = (v: number) => `${Math.round(v).toLocaleString("fr-FR")} K`;
+const formatKamas = (v: number) => `${Math.round(v).toLocaleString("fr-FR")} K`;
 
-  const formatDateTime = useCallback((value: number | string) => {
-    const timestamp = typeof value === "number" ? value : Number(value);
-    if (!Number.isFinite(timestamp)) {
-      return String(value);
+const percentFormatter = new Intl.NumberFormat("fr-FR", {
+  maximumFractionDigits: 2,
+  minimumFractionDigits: 0,
+});
+
+const formatKamasDelta = (value: number) => {
+  const rounded = Math.round(value);
+  const sign = rounded > 0 ? "+" : rounded < 0 ? "-" : "";
+  return `${sign}${Math.abs(rounded).toLocaleString("fr-FR")} K`;
+};
+
+const formatPercentDelta = (value: number) => {
+  const sign = value > 0 ? "+" : value < 0 ? "-" : "";
+  return `${sign}${percentFormatter.format(Math.abs(value))} %`;
+};
+
+const formatDateTime = useCallback((value: number | string) => {
+  const timestamp = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(timestamp)) {
+    return String(value);
     }
     return new Date(timestamp).toLocaleString("fr-FR", {
       dateStyle: "short",
@@ -504,6 +520,34 @@ export default function Fortune() {
                           (purchase.quantity > 0 ? `x${purchase.quantity}` : "?");
                         const key = `${purchase.id}-${purchase.datetime}-${idx}`;
                         const img = buildImgSrc(purchase.imgBlob);
+                        const rawSaleTotal = purchase.saleTotalPrice;
+                        const saleTotal =
+                          typeof rawSaleTotal === "number" && Number.isFinite(rawSaleTotal)
+                            ? rawSaleTotal
+                            : null;
+                        let saleProfit: number | null = null;
+                        const saleDetails: string[] = [];
+                        if (saleTotal != null) {
+                          const profit = saleTotal - purchase.totalPrice;
+                          if (Number.isFinite(profit)) {
+                            saleProfit = profit;
+                            saleDetails.push(formatKamasDelta(profit));
+                            if (purchase.totalPrice > 0) {
+                              const percent = (profit / purchase.totalPrice) * 100;
+                              if (Number.isFinite(percent)) {
+                                saleDetails.push(formatPercentDelta(percent));
+                              }
+                            }
+                          }
+                        }
+                        const deltaClass =
+                          saleProfit != null
+                            ? saleProfit > 0
+                              ? "text-emerald-600"
+                              : saleProfit < 0
+                                ? "text-rose-600"
+                                : "text-gray-600"
+                            : "text-emerald-600";
                         return (
                           <div key={key} className="flex items-center gap-1 whitespace-nowrap">
                             {img ? (
@@ -515,6 +559,19 @@ export default function Fortune() {
                             <span className="font-semibold text-amber-600">
                               {formatKamas(purchase.totalPrice)}
                             </span>
+                            {saleTotal != null && (
+                              <>
+                                <span className="text-gray-400">→</span>
+                                <span className="font-semibold text-emerald-600">
+                                  {formatKamas(saleTotal)}
+                                </span>
+                                {saleDetails.length > 0 && (
+                                  <span className={deltaClass}>
+                                    ({saleDetails.join(", ")})
+                                  </span>
+                                )}
+                              </>
+                            )}
                           </div>
                         );
                       })}

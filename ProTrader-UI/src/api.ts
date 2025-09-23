@@ -60,6 +60,37 @@ export function normalizeDateParam(value: string | Date): string {
   return parsed.toISOString().replace(ISO_MILLISECONDS_REGEX, "Z");
 }
 
+const toNumberOrNull = (value: unknown): number | null => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+};
+
+const toStringOrNull = (value: unknown): string | null => {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed ? trimmed : null;
+  }
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  const str = String(value);
+  return str ? str : null;
+};
+
 /** Envoie une commande vers /api/cmd (le backend relaie vers l’agent) */
 export async function sendCommand(cmd: string, args: any = {}, token: string, timeoutMs?: number) {
   const url = new URL("/api/cmd", API_BASE);
@@ -283,6 +314,11 @@ export type PurchaseEvent = {
   totalPrice: number;
   datetime: string;
   imgBlob?: string;
+  saleTotalPrice: number | null;
+  saleUnitPrice: number | null;
+  saleQuantity: number | null;
+  saleQuantityLabel: string | null;
+  saleDatetime: string | null;
 };
 
 export async function getPurchaseHistory(
@@ -296,19 +332,63 @@ export async function getPurchaseHistory(
   if (limit) url.searchParams.set("limit", String(limit));
   const data = await fetchJSON(url.toString());
   const rawList = (data?.purchases ?? []) as any[];
-  return rawList.map((item) => ({
-    id: Number(item?.id ?? 0),
-    resource: String(item?.resource ?? ""),
-    quantity: Number(item?.quantity ?? 0),
-    quantityLabel:
-      typeof item?.quantity_label === "string" && item.quantity_label.trim() !== ""
-        ? item.quantity_label
-        : null,
-    unitPrice: Number(item?.unit_price ?? 0),
-    totalPrice: Number(item?.total_price ?? 0),
-    datetime: String(item?.datetime ?? ""),
-    imgBlob: typeof item?.img_blob === "string" ? item.img_blob : undefined,
-  }));
+  return rawList.map((item) => {
+    const saleData = item?.sale ?? item?.linked_sale ?? null;
+    const saleTotalPrice =
+      toNumberOrNull(item?.sale_total_price) ??
+      toNumberOrNull(item?.saleTotalPrice) ??
+      toNumberOrNull(item?.sale_total) ??
+      toNumberOrNull(item?.sale_amount) ??
+      toNumberOrNull(saleData?.total_price) ??
+      toNumberOrNull(saleData?.totalPrice) ??
+      toNumberOrNull(saleData?.amount) ??
+      null;
+    const saleUnitPrice =
+      toNumberOrNull(item?.sale_unit_price) ??
+      toNumberOrNull(item?.saleUnitPrice) ??
+      toNumberOrNull(saleData?.unit_price) ??
+      toNumberOrNull(saleData?.unitPrice) ??
+      null;
+    const saleQuantity =
+      toNumberOrNull(item?.sale_quantity) ??
+      toNumberOrNull(item?.saleQuantity) ??
+      toNumberOrNull(saleData?.quantity) ??
+      null;
+    const rawSaleLabel =
+      typeof item?.sale_quantity_label === "string" && item.sale_quantity_label.trim() !== ""
+        ? item.sale_quantity_label
+        : typeof saleData?.quantity_label === "string" && saleData.quantity_label.trim() !== ""
+          ? saleData.quantity_label
+          : typeof saleData?.quantityLabel === "string" && saleData.quantityLabel.trim() !== ""
+            ? saleData.quantityLabel
+            : null;
+    const saleQuantityLabel = typeof rawSaleLabel === "string" ? rawSaleLabel.trim() || null : null;
+    const saleDatetime =
+      toStringOrNull(item?.sale_datetime) ??
+      toStringOrNull(item?.saleDatetime) ??
+      toStringOrNull(saleData?.datetime) ??
+      toStringOrNull(saleData?.date) ??
+      null;
+
+    return {
+      id: Number(item?.id ?? 0),
+      resource: String(item?.resource ?? ""),
+      quantity: Number(item?.quantity ?? 0),
+      quantityLabel:
+        typeof item?.quantity_label === "string" && item.quantity_label.trim() !== ""
+          ? item.quantity_label
+          : null,
+      unitPrice: Number(item?.unit_price ?? 0),
+      totalPrice: Number(item?.total_price ?? 0),
+      datetime: String(item?.datetime ?? ""),
+      imgBlob: typeof item?.img_blob === "string" ? item.img_blob : undefined,
+      saleTotalPrice,
+      saleUnitPrice,
+      saleQuantity,
+      saleQuantityLabel,
+      saleDatetime,
+    };
+  });
 }
 
 // PRICES -------------------------------------------------------------------
