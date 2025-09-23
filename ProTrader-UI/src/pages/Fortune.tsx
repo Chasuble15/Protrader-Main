@@ -36,6 +36,7 @@ type TimeRangeConfig = {
 };
 
 const DAY_MS = 24 * 3600 * 1000;
+const TEN_MINUTES_MS = 10 * 60 * 1000;
 
 const TIME_RANGES: Record<TimeRangeKey, TimeRangeConfig> = {
   "1d": { label: "1 jour", durationMs: DAY_MS, bucket: "raw", purchaseLimit: 200 },
@@ -520,9 +521,26 @@ const formatDateTime = useCallback((value: number | string) => {
                           (purchase.quantity > 0 ? `x${purchase.quantity}` : "?");
                         const key = `${purchase.id}-${purchase.datetime}-${idx}`;
                         const img = buildImgSrc(purchase.imgBlob);
-                        const rawSaleTotal = purchase.saleTotalPrice;
+                        const purchaseTimestamp = purchase.datetime
+                          ? parseTimestamp(purchase.datetime)
+                          : Number.NaN;
+                        const saleTimestamp = purchase.saleDatetime
+                          ? parseTimestamp(purchase.saleDatetime)
+                          : null;
+                        let saleMatchesPurchase = false;
+                        if (
+                          Number.isFinite(purchaseTimestamp) &&
+                          saleTimestamp !== null &&
+                          Number.isFinite(saleTimestamp)
+                        ) {
+                          const delta = saleTimestamp - purchaseTimestamp;
+                          saleMatchesPurchase = delta >= 0 && delta <= TEN_MINUTES_MS;
+                        }
+                        const rawSaleTotal = saleMatchesPurchase ? purchase.saleTotalPrice : null;
                         const saleTotal =
-                          typeof rawSaleTotal === "number" && Number.isFinite(rawSaleTotal)
+                          saleMatchesPurchase &&
+                          typeof rawSaleTotal === "number" &&
+                          Number.isFinite(rawSaleTotal)
                             ? rawSaleTotal
                             : null;
                         let saleProfit: number | null = null;
