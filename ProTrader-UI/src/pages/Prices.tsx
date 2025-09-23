@@ -22,12 +22,48 @@ ChartJS.register(LinearScale, PointElement, LineElement, Tooltip, Legend);
 
 const COLORS = ["#3b82f6", "#10b981", "#ef4444", "#f59e0b", "#8b5cf6"];
 
-const parseTimestamp = (t: string): number => {
-  const n = Number(t);
-  if (!Number.isNaN(n)) {
-    return n < 1e12 ? n * 1000 : n;
+const parseTimestamp = (input: string): number => {
+  const raw = typeof input === "string" ? input.trim() : "";
+  if (!raw) return Number.NaN;
+
+  const numeric = Number(raw);
+  if (!Number.isNaN(numeric)) {
+    return numeric < 1e12 ? numeric * 1000 : numeric;
   }
-  return Date.parse(t.endsWith("Z") ? t : `${t}Z`);
+
+  const normalized = raw.includes("T") ? raw : raw.replace(" ", "T");
+  const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(normalized);
+  const candidates: string[] = [];
+  const pushCandidate = (value: string) => {
+    if (!value || candidates.includes(value)) return;
+    candidates.push(value);
+  };
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+    pushCandidate(`${normalized}T00:00:00Z`);
+  }
+
+  if (hasTimezone) {
+    pushCandidate(normalized);
+  } else {
+    if (!normalized.endsWith("Z")) {
+      pushCandidate(`${normalized}Z`);
+    }
+    pushCandidate(normalized);
+  }
+
+  if (normalized !== raw) {
+    pushCandidate(raw);
+  }
+
+  for (const candidate of candidates) {
+    const parsed = Date.parse(candidate);
+    if (!Number.isNaN(parsed)) {
+      return parsed;
+    }
+  }
+
+  return Number.NaN;
 };
 
 const imgSrc = (r: HdvResource) => {

@@ -16,12 +16,48 @@ import {
 
 ChartJS.register(LinearScale, PointElement, LineElement, Tooltip, Legend);
 
-const parseTimestamp = (t: string): number => {
-  const n = Number(t);
-  if (!Number.isNaN(n)) {
-    return n < 1e12 ? n * 1000 : n;
+const parseTimestamp = (input: string): number => {
+  const raw = typeof input === "string" ? input.trim() : "";
+  if (!raw) return Number.NaN;
+
+  const numeric = Number(raw);
+  if (!Number.isNaN(numeric)) {
+    return numeric < 1e12 ? numeric * 1000 : numeric;
   }
-  return Date.parse(t.endsWith("Z") ? t : `${t}Z`);
+
+  const normalized = raw.includes("T") ? raw : raw.replace(" ", "T");
+  const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(normalized);
+  const candidates: string[] = [];
+  const pushCandidate = (value: string) => {
+    if (!value || candidates.includes(value)) return;
+    candidates.push(value);
+  };
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+    pushCandidate(`${normalized}T00:00:00Z`);
+  }
+
+  if (hasTimezone) {
+    pushCandidate(normalized);
+  } else {
+    if (!normalized.endsWith("Z")) {
+      pushCandidate(`${normalized}Z`);
+    }
+    pushCandidate(normalized);
+  }
+
+  if (normalized !== raw) {
+    pushCandidate(raw);
+  }
+
+  for (const candidate of candidates) {
+    const parsed = Date.parse(candidate);
+    if (!Number.isNaN(parsed)) {
+      return parsed;
+    }
+  }
+
+  return Number.NaN;
 };
 
 const QTY_LIST: Qty[] = ["x1", "x10", "x100", "x1000"];
@@ -216,13 +252,13 @@ const formatDateTime = useCallback((value: number | string) => {
   const timestamp = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(timestamp)) {
     return String(value);
-    }
-    return new Date(timestamp).toLocaleString("fr-FR", {
-      dateStyle: "short",
-      timeStyle: "medium",
-      timeZone: "UTC",
-    });
-  }, []);
+  }
+  return new Date(timestamp).toLocaleString("fr-FR", {
+    dateStyle: "short",
+    timeStyle: "medium",
+    timeZone: "UTC",
+  });
+}, []);
 
   const updateSetting = (
     key: string,
@@ -533,8 +569,8 @@ const formatDateTime = useCallback((value: number | string) => {
                           saleTimestamp !== null &&
                           Number.isFinite(saleTimestamp)
                         ) {
-                          const delta = saleTimestamp - purchaseTimestamp;
-                          saleMatchesPurchase = delta >= 0 && delta <= TEN_MINUTES_MS;
+                          const delta = Math.abs(saleTimestamp - purchaseTimestamp);
+                          saleMatchesPurchase = delta <= TEN_MINUTES_MS;
                         }
                         const rawSaleTotal = saleMatchesPurchase ? purchase.saleTotalPrice : null;
                         const saleTotal =
