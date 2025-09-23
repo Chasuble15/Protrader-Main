@@ -9,7 +9,7 @@ import yaml
 from settings import CONFIG_PATH
 
 from actions.dispatcher import register
-from scripts.login import run
+from scripts.marketplace_workflow import run
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
