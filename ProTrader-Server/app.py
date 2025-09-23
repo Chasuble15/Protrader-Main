@@ -1,6 +1,7 @@
 # backend/app.py
 # pip install fastapi "uvicorn[standard]" websockets
 import asyncio, json, time, statistics
+from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List, Tuple
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Body
@@ -967,6 +968,55 @@ def get_kamas_history(
     return {"points": points}
 
 
+def _normalize_resource_key(resource: str | None) -> str | None:
+    if not isinstance(resource, str):
+        return None
+    normalized = resource.strip().lower()
+    return normalized or None
+
+
+def _normalize_qty_label_for_match(label: str | None, quantity: int | None) -> str | None:
+    if isinstance(label, str):
+        cleaned = label.strip().lower()
+        if cleaned:
+            collapsed = cleaned.replace(" ", "")
+            if collapsed.startswith("x") and collapsed[1:].isdigit():
+                value = collapsed[1:]
+                try:
+                    qty_val = int(value)
+                except ValueError:
+                    qty_val = None
+                else:
+                    if qty_val and qty_val > 0:
+                        return f"x{qty_val}"
+            if collapsed.isdigit():
+                try:
+                    qty_val = int(collapsed)
+                except ValueError:
+                    qty_val = None
+                else:
+                    if qty_val and qty_val > 0:
+                        return f"x{qty_val}"
+            digits = "".join(ch for ch in collapsed if ch.isdigit())
+            if digits:
+                try:
+                    qty_val = int(digits)
+                except ValueError:
+                    qty_val = None
+                else:
+                    if qty_val and qty_val > 0:
+                        return f"x{qty_val}"
+            return collapsed
+    if quantity is not None:
+        try:
+            qty_val = int(quantity)
+        except (TypeError, ValueError):
+            qty_val = 0
+        if qty_val > 0:
+            return f"x{qty_val}"
+    return None
+
+
 @app.get("/api/purchase_history")
 def get_purchase_history(
     date_from: str | None = Query(default=None, description="Début (ISO8601)"),
@@ -1017,24 +1067,222 @@ def get_purchase_history(
     rows = cur.fetchall()
 
     purchases: list[dict[str, Any]] = []
+    purchase_meta: list[dict[str, Any]] = []
+    purchase_datetimes: list[str] = []
+    resources_for_sales: set[str] = set()
+
     for r in rows:
         blob = r["img_blob"]
         if blob is not None and isinstance(blob, (bytes, bytearray)):
             img_b64 = base64.b64encode(blob).decode("ascii")
         else:
             img_b64 = ""
-        purchases.append(
+
+        resource_value = r["resource"]
+        resource_trimmed = resource_value.strip() if isinstance(resource_value, str) else ""
+        datetime_value = r["datetime"] or ""
+        try:
+            quantity_value = int(r["quantity"])
+        except (TypeError, ValueError):
+            quantity_value = 0
+        quantity_label_value = r["quantity_label"]
+        try:
+            unit_price_value = float(r["unit_price"])
+        except (TypeError, ValueError):
+            unit_price_value = 0.0
+        try:
+            total_price_value = int(r["total_price"])
+        except (TypeError, ValueError):
+            total_price_value = 0
+
+        record = {
+            "id": r["id"],
+            "resource": resource_value,
+            "quantity": quantity_value,
+            "quantity_label": quantity_label_value,
+            "unit_price": unit_price_value,
+            "total_price": total_price_value,
+            "datetime": datetime_value,
+            "img_blob": img_b64,
+            "sale_total_price": None,
+            "sale_unit_price": None,
+            "sale_quantity": None,
+            "sale_quantity_label": None,
+            "sale_datetime": None,
+        }
+        purchases.append(record)
+
+        resource_key = _normalize_resource_key(resource_value)
+        label_keys: list[str] = []
+        label_key = _normalize_qty_label_for_match(quantity_label_value, quantity_value)
+        if label_key:
+            label_keys.append(label_key)
+        fallback_label = _normalize_qty_label_for_match(None, quantity_value)
+        if fallback_label and fallback_label not in label_keys:
+            label_keys.append(fallback_label)
+
+        purchase_meta.append(
             {
-                "id": r["id"],
-                "resource": r["resource"],
-                "quantity": r["quantity"],
-                "quantity_label": r["quantity_label"],
-                "unit_price": r["unit_price"],
-                "total_price": r["total_price"],
-                "datetime": r["datetime"],
-                "img_blob": img_b64,
+                "resource_key": resource_key,
+                "label_keys": label_keys,
+                "datetime": datetime_value,
             }
         )
+
+        if resource_trimmed:
+            resources_for_sales.add(resource_trimmed)
+        if datetime_value:
+            purchase_datetimes.append(datetime_value)
+
+    sales_by_label: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    sales_by_resource: dict[str, list[dict[str, Any]]] = defaultdict(list)
+
+    if purchases:
+        ensure_sale_schema(conn)
+        sale_where: list[str] = []
+        sale_params: list[Any] = []
+
+        if purchase_datetimes:
+            earliest_purchase = min(purchase_datetimes)
+            if len(earliest_purchase) == 10:
+                sale_where.append("s.datetime >= ?")
+                sale_params.append(earliest_purchase + "T00:00:00Z")
+            else:
+                sale_where.append("s.datetime >= ?")
+                sale_params.append(earliest_purchase)
+
+        if dt_to:
+            if len(dt_to) == 10:
+                sale_where.append("s.datetime < ?")
+                sale_params.append(dt_to + "T23:59:59Z")
+            else:
+                sale_where.append("s.datetime <= ?")
+                sale_params.append(dt_to)
+
+        resources_list = sorted(resources_for_sales)
+        if resources_list:
+            placeholders = ",".join(["?"] * len(resources_list))
+            sale_where.append(f"s.resource IN ({placeholders})")
+            sale_params.extend(resources_list)
+
+        sale_where_sql = "WHERE " + " AND ".join(sale_where) if sale_where else ""
+        sale_limit = max(limit * 3, 1000)
+
+        cur.execute(
+            f"""
+            SELECT s.id, s.resource, s.quantity, s.quantity_label,
+                   s.unit_price, s.total_price, s.datetime
+            FROM sale_history s
+            {sale_where_sql}
+            ORDER BY s.datetime ASC
+            LIMIT ?
+            """,
+            (*sale_params, sale_limit),
+        )
+        sale_rows = cur.fetchall()
+
+        for r in sale_rows:
+            resource_value = r["resource"]
+            datetime_value = r["datetime"] or ""
+            try:
+                quantity_value = int(r["quantity"])
+            except (TypeError, ValueError):
+                quantity_value = 0
+            try:
+                sale_unit_price = float(r["unit_price"])
+            except (TypeError, ValueError):
+                sale_unit_price = 0.0
+            try:
+                sale_total_price = int(r["total_price"])
+            except (TypeError, ValueError):
+                sale_total_price = 0
+            sale_record = {
+                "id": r["id"],
+                "resource": resource_value,
+                "quantity": quantity_value,
+                "quantity_label": r["quantity_label"],
+                "unit_price": sale_unit_price,
+                "total_price": sale_total_price,
+                "datetime": datetime_value,
+            }
+
+            resource_key = _normalize_resource_key(resource_value)
+            label_key = _normalize_qty_label_for_match(r["quantity_label"], quantity_value)
+
+            if resource_key:
+                sales_by_resource[resource_key].append({**sale_record, "_label_key": label_key})
+                if label_key:
+                    sales_by_label[(resource_key, label_key)].append(sale_record)
+
+        for key, values in sales_by_label.items():
+            values.sort(key=lambda x: x["datetime"])
+        for key, values in sales_by_resource.items():
+            values.sort(key=lambda x: x["datetime"])
+
+        sale_index_by_label: dict[tuple[str, str], int] = {}
+        sale_index_by_resource: dict[str, int] = {}
+        used_sale_ids: set[int] = set()
+
+        for idx, purchase in enumerate(purchases):
+            meta = purchase_meta[idx]
+            resource_key = meta.get("resource_key")
+            if not resource_key:
+                continue
+
+            label_keys: list[str] = meta.get("label_keys", [])
+            purchase_datetime: str = meta.get("datetime", "")
+            matched_sale: dict[str, Any] | None = None
+
+            for label_key in label_keys:
+                sale_list = sales_by_label.get((resource_key, label_key))
+                if not sale_list:
+                    continue
+                pointer = sale_index_by_label.get((resource_key, label_key), 0)
+                while pointer < len(sale_list):
+                    sale = sale_list[pointer]
+                    pointer += 1
+                    if sale["id"] in used_sale_ids:
+                        continue
+                    if sale["datetime"] < purchase_datetime:
+                        continue
+                    matched_sale = sale
+                    break
+                sale_index_by_label[(resource_key, label_key)] = pointer
+                if matched_sale:
+                    break
+
+            if matched_sale is None:
+                sale_list = sales_by_resource.get(resource_key)
+                if sale_list:
+                    pointer = sale_index_by_resource.get(resource_key, 0)
+                    while pointer < len(sale_list):
+                        sale = sale_list[pointer]
+                        pointer += 1
+                        if sale["id"] in used_sale_ids:
+                            continue
+                        label_key = sale.get("_label_key")
+                        if label_key:
+                            if label_keys and label_key not in label_keys:
+                                continue
+                            if not label_keys:
+                                continue
+                        if sale["datetime"] < purchase_datetime:
+                            continue
+                        matched_sale = {k: v for k, v in sale.items() if not k.startswith("_")}
+                        break
+                    sale_index_by_resource[resource_key] = pointer
+
+            if matched_sale:
+                used_sale_ids.add(matched_sale["id"])
+                purchase.update(
+                    {
+                        "sale_total_price": matched_sale["total_price"],
+                        "sale_unit_price": matched_sale["unit_price"],
+                        "sale_quantity": matched_sale["quantity"],
+                        "sale_quantity_label": matched_sale["quantity_label"],
+                        "sale_datetime": matched_sale["datetime"],
+                    }
+                )
 
     conn.close()
     return {"purchases": purchases}
