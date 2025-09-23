@@ -72,8 +72,6 @@ type TimeRangeConfig = {
 };
 
 const DAY_MS = 24 * 3600 * 1000;
-const TEN_MINUTES_MS = 10 * 60 * 1000;
-
 const TIME_RANGES: Record<TimeRangeKey, TimeRangeConfig> = {
   "1d": { label: "1 jour", durationMs: DAY_MS, bucket: "raw", purchaseLimit: 200 },
   "3d": { label: "3 jours", durationMs: 3 * DAY_MS, bucket: "hour", purchaseLimit: 400 },
@@ -560,21 +558,18 @@ const formatDateTime = useCallback((value: number | string) => {
                         const purchaseTimestamp = purchase.datetime
                           ? parseTimestamp(purchase.datetime)
                           : Number.NaN;
-                        const saleTimestamp = purchase.saleDatetime
+                        const rawSaleTimestamp = purchase.saleDatetime
                           ? parseTimestamp(purchase.saleDatetime)
                           : null;
-                        let saleMatchesPurchase = false;
-                        if (
-                          Number.isFinite(purchaseTimestamp) &&
-                          saleTimestamp !== null &&
-                          Number.isFinite(saleTimestamp)
-                        ) {
-                          const delta = Math.abs(saleTimestamp - purchaseTimestamp);
-                          saleMatchesPurchase = delta <= TEN_MINUTES_MS;
-                        }
-                        const rawSaleTotal = saleMatchesPurchase ? purchase.saleTotalPrice : null;
+                        const hasPurchaseTimestamp = Number.isFinite(purchaseTimestamp);
+                        const hasSaleTimestamp =
+                          typeof rawSaleTimestamp === "number" && Number.isFinite(rawSaleTimestamp);
+                        const saleIsChronologicalMatch = hasSaleTimestamp && hasPurchaseTimestamp
+                          ? rawSaleTimestamp >= purchaseTimestamp
+                          : true;
+                        const rawSaleTotal = saleIsChronologicalMatch ? purchase.saleTotalPrice : null;
                         const saleTotal =
-                          saleMatchesPurchase &&
+                          saleIsChronologicalMatch &&
                           typeof rawSaleTotal === "number" &&
                           Number.isFinite(rawSaleTotal)
                             ? rawSaleTotal
