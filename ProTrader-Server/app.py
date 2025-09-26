@@ -524,6 +524,10 @@ class SaveSelectionSettingsBody(BaseModel):
     items: List[SelectionSetting]
 
 
+class PurgeHistoryBody(BaseModel):
+    confirm: bool = False
+
+
 @app.post("/api/selection_settings")
 def save_selection_settings(body: SaveSelectionSettingsBody):
     conn = get_db()
@@ -582,6 +586,37 @@ def get_trade_mode_endpoint():
 def save_trade_mode_endpoint(body: Dict[str, Any] = Body(...)):
     trade = bool(body.get("trade"))
     save_trade_mode_to_db(trade)
+    return {"ok": True}
+
+
+@app.post("/api/admin/purge_history")
+def purge_history_endpoint(body: PurgeHistoryBody):
+    if not body.confirm:
+        raise HTTPException(400, "Confirmation requise")
+
+    conn = get_db()
+    try:
+        ensure_price_schema(conn)
+        ensure_kamas_schema(conn)
+        ensure_purchase_schema(conn)
+        ensure_sale_schema(conn)
+
+        cur = conn.cursor()
+        cur.execute("BEGIN")
+        cur.execute("DELETE FROM hdv_prices")
+        cur.execute("DELETE FROM kamas_history")
+        cur.execute("DELETE FROM purchase_history")
+        cur.execute("DELETE FROM sale_history")
+        conn.commit()
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise HTTPException(500, f"Failed to purge history: {e}")
+    finally:
+        conn.close()
+
     return {"ok": True}
 
 

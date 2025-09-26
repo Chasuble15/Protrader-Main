@@ -3,6 +3,7 @@ import Card from "../components/Card";
 import {
   listHdvPricePoints,
   deleteHdvPricePoint,
+  purgeHistoryData,
   type HdvPricePoint,
 } from "../api";
 
@@ -11,6 +12,7 @@ export default function PricePoints() {
   const [qty, setQty] = useState("");
   const [points, setPoints] = useState<HdvPricePoint[]>([]);
   const [loading, setLoading] = useState(false);
+  const [purging, setPurging] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -40,6 +42,24 @@ export default function PricePoints() {
     }
   };
 
+  const handlePurgeHistory = async () => {
+    if (purging) return;
+    if (!confirm("Supprimer tout l'historique (prix, fortune, achats, ventes) ?")) {
+      return;
+    }
+    setPurging(true);
+    try {
+      await purgeHistoryData();
+      setPoints([]);
+      alert("Historique supprimé.");
+    } catch (e) {
+      console.error("Failed to purge history", e);
+      alert("Erreur lors de la suppression de l'historique.");
+    } finally {
+      setPurging(false);
+    }
+  };
+
   return (
     <Card>
       <h2 className="text-base font-semibold mb-2">Gestion des prix</h2>
@@ -61,12 +81,21 @@ export default function PricePoints() {
           <option value="x100">x100</option>
           <option value="x1000">x1000</option>
         </select>
-        <button
-          onClick={load}
-          className="border rounded px-2 py-1 hover:bg-slate-50"
-        >
-          Rafraîchir
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={load}
+            className="border rounded px-2 py-1 hover:bg-slate-50"
+          >
+            Rafraîchir
+          </button>
+          <button
+            onClick={handlePurgeHistory}
+            disabled={purging}
+            className="border rounded px-2 py-1 text-red-600 border-red-300 hover:bg-red-50 disabled:opacity-50"
+          >
+            Tout supprimer
+          </button>
+        </div>
       </div>
       <div className="overflow-x-auto">
         <table className="min-w-full text-sm">

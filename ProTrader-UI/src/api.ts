@@ -497,3 +497,13 @@ export async function deleteHdvPricePoint(id: number): Promise<{ ok: boolean }> 
   const data = await fetchJSON(url.toString(), { method: "DELETE" });
   return data as { ok: boolean };
 }
+
+export async function purgeHistoryData(): Promise<{ ok: boolean }> {
+  const url = new URL("/api/admin/purge_history", API_BASE);
+  const data = await fetchJSON(url.toString(), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ confirm: true }),
+  });
+  return data as { ok: boolean };
+}
