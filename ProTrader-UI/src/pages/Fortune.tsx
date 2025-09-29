@@ -258,6 +258,32 @@ const formatDateTime = useCallback((value: number | string) => {
   });
 }, []);
 
+  const computeSaleStats = useCallback(
+    (purchase: PurchaseEvent): { saleTotal: number | null; profit: number | null } => {
+      const purchaseTimestamp = purchase.datetime ? parseTimestamp(purchase.datetime) : Number.NaN;
+      const saleTimestamp = purchase.saleDatetime ? parseTimestamp(purchase.saleDatetime) : null;
+      const hasPurchaseTimestamp = Number.isFinite(purchaseTimestamp);
+      const hasSaleTimestamp = typeof saleTimestamp === "number" && Number.isFinite(saleTimestamp);
+      const saleIsChronologicalMatch = hasSaleTimestamp && hasPurchaseTimestamp
+        ? saleTimestamp >= purchaseTimestamp
+        : true;
+      const rawSaleTotal = saleIsChronologicalMatch ? purchase.saleTotalPrice : null;
+      const saleTotal =
+        saleIsChronologicalMatch && typeof rawSaleTotal === "number" && Number.isFinite(rawSaleTotal)
+          ? rawSaleTotal
+          : null;
+      let profit: number | null = null;
+      if (saleTotal != null) {
+        const delta = saleTotal - purchase.totalPrice;
+        if (Number.isFinite(delta)) {
+          profit = delta;
+        }
+      }
+      return { saleTotal, profit };
+    },
+    [],
+  );
+
   const updateSetting = (
     key: string,
     patch: Partial<{ marginType: "percent" | "absolute"; value: number; active: boolean }>,
@@ -293,6 +319,22 @@ const formatDateTime = useCallback((value: number | string) => {
       .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y))
       .sort((a, b) => a.x - b.x);
   }, [points]);
+
+  const currentFortune = useMemo(() => {
+    if (kamasSeries.length === 0) return null;
+    return kamasSeries[kamasSeries.length - 1].y;
+  }, [kamasSeries]);
+
+  const totalProfit = useMemo(() => {
+    let sum = 0;
+    for (const purchase of purchases) {
+      const { profit } = computeSaleStats(purchase);
+      if (profit != null) {
+        sum += profit;
+      }
+    }
+    return sum;
+  }, [purchases, computeSaleStats]);
 
   const findClosestAmount = useCallback(
     (timestamp: number) => {
@@ -523,6 +565,68 @@ const formatDateTime = useCallback((value: number | string) => {
           );
         })}
       </div>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="rounded-3xl border border-amber-200 bg-gradient-to-br from-amber-50 via-amber-100 to-white p-5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-amber-600">Fortune actuelle</p>
+              <p className="mt-2 text-3xl font-bold text-amber-900">
+                {currentFortune != null ? formatKamas(currentFortune) : "—"}
+              </p>
+            </div>
+            <div className="hidden h-12 w-12 items-center justify-center rounded-full bg-white/70 text-2xl text-amber-500 sm:flex">
+              💰
+            </div>
+          </div>
+        </div>
+        <div
+          className={`rounded-3xl border bg-gradient-to-br p-5 shadow-sm ${
+            totalProfit > 0
+              ? "border-emerald-200 from-emerald-50 via-emerald-100 to-white"
+              : totalProfit < 0
+                ? "border-rose-200 from-rose-50 via-rose-100 to-white"
+                : "border-slate-200 from-slate-50 via-slate-100 to-white"
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <div>
+              <p
+                className={`text-xs font-semibold uppercase tracking-wide ${
+                  totalProfit > 0
+                    ? "text-emerald-600"
+                    : totalProfit < 0
+                      ? "text-rose-600"
+                      : "text-slate-600"
+                }`}
+              >
+                Bénéfice total
+              </p>
+              <p
+                className={`mt-2 text-3xl font-bold ${
+                  totalProfit > 0
+                    ? "text-emerald-700"
+                    : totalProfit < 0
+                      ? "text-rose-600"
+                      : "text-slate-700"
+                }`}
+              >
+                {formatKamasDelta(totalProfit)}
+              </p>
+            </div>
+            <div
+              className={`hidden h-12 w-12 items-center justify-center rounded-full bg-white/70 text-2xl sm:flex ${
+                totalProfit > 0
+                  ? "text-emerald-500"
+                  : totalProfit < 0
+                    ? "text-rose-500"
+                    : "text-slate-500"
+              }`}
+            >
+              📈
+            </div>
+          </div>
+        </div>
+      </div>
       <div className="relative h-[360px]">
         <Line ref={chartRef} data={data} options={options} style={{ height: "100%" }} />
         <div className="pointer-events-none absolute inset-0">
@@ -555,37 +659,14 @@ const formatDateTime = useCallback((value: number | string) => {
                           (purchase.quantity > 0 ? `x${purchase.quantity}` : "?");
                         const key = `${purchase.id}-${purchase.datetime}-${idx}`;
                         const img = buildImgSrc(purchase.imgBlob);
-                        const purchaseTimestamp = purchase.datetime
-                          ? parseTimestamp(purchase.datetime)
-                          : Number.NaN;
-                        const rawSaleTimestamp = purchase.saleDatetime
-                          ? parseTimestamp(purchase.saleDatetime)
-                          : null;
-                        const hasPurchaseTimestamp = Number.isFinite(purchaseTimestamp);
-                        const hasSaleTimestamp =
-                          typeof rawSaleTimestamp === "number" && Number.isFinite(rawSaleTimestamp);
-                        const saleIsChronologicalMatch = hasSaleTimestamp && hasPurchaseTimestamp
-                          ? rawSaleTimestamp >= purchaseTimestamp
-                          : true;
-                        const rawSaleTotal = saleIsChronologicalMatch ? purchase.saleTotalPrice : null;
-                        const saleTotal =
-                          saleIsChronologicalMatch &&
-                          typeof rawSaleTotal === "number" &&
-                          Number.isFinite(rawSaleTotal)
-                            ? rawSaleTotal
-                            : null;
-                        let saleProfit: number | null = null;
+                        const { saleTotal, profit: saleProfit } = computeSaleStats(purchase);
                         const saleDetails: string[] = [];
-                        if (saleTotal != null) {
-                          const profit = saleTotal - purchase.totalPrice;
-                          if (Number.isFinite(profit)) {
-                            saleProfit = profit;
-                            saleDetails.push(formatKamasDelta(profit));
-                            if (purchase.totalPrice > 0) {
-                              const percent = (profit / purchase.totalPrice) * 100;
-                              if (Number.isFinite(percent)) {
-                                saleDetails.push(formatPercentDelta(percent));
-                              }
+                        if (saleTotal != null && saleProfit != null) {
+                          saleDetails.push(formatKamasDelta(saleProfit));
+                          if (purchase.totalPrice > 0) {
+                            const percent = (saleProfit / purchase.totalPrice) * 100;
+                            if (Number.isFinite(percent)) {
+                              saleDetails.push(formatPercentDelta(percent));
                             }
                           }
                         }
