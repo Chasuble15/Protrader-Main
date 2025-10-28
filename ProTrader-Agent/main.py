@@ -5,6 +5,10 @@ from settings import SERVER_WS_URL
 from handlers.commands import on_message
 from core.overlay import OverlayService, RectSpec
 from utils.logger import get_logger
+from utils.interception_control import (
+    ensure_interception_ready,
+    disable_interception,
+)
 import bus
 
 import actions.config_actions
@@ -14,6 +18,7 @@ import actions.script_actions
 logger = get_logger(__name__)
 
 def run():
+    ensure_interception_ready()
     # 1) Démarre l’overlay ici (au boot)
     logger.info("Starting overlay service")
     bus.overlay = OverlayService(fps=30)
@@ -48,6 +53,10 @@ def run():
                 logger.info("Overlay service stopped")
         except Exception:
             logger.exception("Error while stopping overlay service")
+        try:
+            disable_interception()
+        except Exception:
+            logger.exception("Error while disabling Interception driver")
 
 if __name__ == "__main__":
     run()
