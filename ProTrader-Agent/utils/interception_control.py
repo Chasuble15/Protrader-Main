@@ -12,6 +12,7 @@ from __future__ import annotations
 import platform
 import subprocess
 import textwrap
+import sys
 from typing import Optional
 
 from utils.logger import get_logger
@@ -119,7 +120,15 @@ def ensure_interception_ready() -> None:
         logger.debug("Interception check skipped (non-Windows platform)")
         return
 
-    if _is_interception_ready():
+    probe_result = _probe_interception_driver()
+    if probe_result is False:
+        logger.warning(
+            "Interception Python bindings report missing driver; restoring backup"
+        )
+        _run_powershell_script(_REACTIVATE_SCRIPT, "restore Interception settings")
+        return
+
+    if _is_interception_ready() and (probe_result or probe_result is None):
         logger.info("Interception driver already enabled")
         return
 
@@ -161,6 +170,75 @@ def _is_interception_ready() -> bool:
             logger.debug("Registry Start=4 detected for %s", path)
             return False
     return True
+
+
+def _probe_interception_driver() -> Optional[bool]:
+    """Check whether the Interception Python bindings can reach the driver.
+
+    We spawn a short-lived Python process that imports ``interception`` and
+    triggers ``auto_capture_devices``. When the driver is missing the library
+    raises ``DriverNotFoundError`` which we translate to ``False`` so the caller
+    can attempt a restoration. ``None`` signals that the bindings are not
+    available (e.g. package not installed) and therefore no decision can be made
+    based on this probe.
+    """
+
+    script = textwrap.dedent(
+        """
+        import sys
+        try:
+            import interception
+            from interception import exceptions
+        except Exception:
+            sys.exit(2)
+
+        try:
+            interception.auto_capture_devices(mouse=True)
+        except exceptions.DriverNotFoundError:
+            sys.exit(1)
+        except Exception:
+            sys.exit(3)
+
+        sys.exit(0)
+        """
+    ).strip()
+
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                script,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except Exception:
+        logger.debug("Unable to spawn probe process for Interception driver", exc_info=True)
+        return None
+
+    if result.returncode == 0:
+        logger.debug("Interception probe succeeded")
+        return True
+
+    if result.returncode == 1:
+        logger.debug("Interception probe reported missing driver: %s", result.stderr.strip())
+        return False
+
+    if result.returncode == 2:
+        logger.info(
+            "Interception Python package not available; skipping driver probe"
+        )
+        return None
+
+    logger.debug(
+        "Unexpected result from Interception probe (code %s): stdout=%s stderr=%s",
+        result.returncode,
+        result.stdout.strip(),
+        result.stderr.strip(),
+    )
+    return None
 
 
 def _read_registry_dword(path: str, name: str) -> Optional[int]:
